@@ -40,18 +40,7 @@ This project provides a **flexible and developer-friendly** framework to interac
 pip install -r requirements.txt
 ```
 
-### **2️⃣ Install Provider-Specific Dependencies (as needed)**
-```bash
-# For OpenAI
-pip install openai>=1.0.0
-
-# For Anthropic Claude
-pip install anthropic
-
-# For Ollama - no additional packages needed, just ensure Ollama is running locally
-```
-
-### **3️⃣ Set API Keys**
+### **2️⃣ Set API Keys**
 ```bash
 # For OpenAI
 export OPENAI_API_KEY="your-openai-api-key"
