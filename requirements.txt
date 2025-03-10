@@ -1,0 +1,14 @@
+# Core dependencies
+pyyaml
+requests
+typing-extensions
+python-dotenv
+
+# Provider-specific dependencies (install as needed)
+# OpenAI
+openai
+
+# Anthropic
+anthropic
+
+# For local models like Ollama, only requests is needed (included above)
