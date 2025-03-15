@@ -3,10 +3,13 @@ import argparse
 import json
 import logging
 import os
+import io
+import sys
 from llm_inference import LLMInference
 from model_providers import get_provider
 
 def main():
+    # Create argument parser
     parser = argparse.ArgumentParser(description="Multi-provider LLM Inference Tool")
     
     # Provider configuration
@@ -57,8 +60,25 @@ def main():
                             help="List available providers")
     utility_group.add_argument("--validate-models", action="store_true", 
                             help="Validate models & parameters in the prompt file")
+    utility_group.add_argument("--debug", action="store_true",
+                            help="Enable debug mode with detailed output about LLM inference")
+    utility_group.add_argument("-v", "--verbose", action="store_true", 
+                            help="Enable more verbose debug output (use with --debug)")
     
     args = parser.parse_args()
+    
+    # Set up logging based on debug flags
+    if args.debug:
+        log_format = "%(asctime)s - %(levelname)s - %(name)s - %(message)s" if args.verbose else "%(asctime)s - %(levelname)s - %(message)s"
+        # Reset the root logger and configure it with DEBUG level
+        for handler in logging.root.handlers[:]:
+            logging.root.removeHandler(handler)
+        logging.basicConfig(level=logging.DEBUG, format=log_format)
+    else:
+        # In non-debug mode, silence logging output
+        for handler in logging.root.handlers[:]:
+            logging.root.removeHandler(handler)
+        logging.basicConfig(level=logging.ERROR, format="%(message)s")
     
     # Handle list providers
     if args.list_providers:
@@ -103,7 +123,7 @@ def main():
             else:
                 env_var = None
                 
-            if env_var and os.environ.get(env_var):
+            if env_var and os.environ.get(env_var) and args.debug:
                 print(f"Using API key from environment variable: {env_var}")
         
         llm = LLMInference(
@@ -164,27 +184,65 @@ def main():
     # Handle YAML/JSON prompt execution
     if args.file:
         try:
-            results = llm.run(args.file, args.output)
+            # Load the prompts first to get the correct order for display
+            loaded_prompts = []
+            try:
+                loaded_prompts = llm.load_prompts(args.file)
+                prompt_ids_ordered = [p.get("id") for p in loaded_prompts]
+            except Exception as e:
+                logging.warning(f"Could not load prompts for ordering: {e}")
             
-            # Handle printing results if requested
+            # Pass args to run method to control behavior
+            results = llm.run(args.file, args.output, cli_args=args)
+            
+            # Handle printing results if requested (CLI approach)
             if hasattr(args, 'print') and args.print is not None:
                 print("\n=== LLM INFERENCE RESULTS ===\n")
                 
-                # If no specific IDs were provided, print all results
-                if len(args.print) == 0:
-                    for prompt_id, result in results.items():
+                # Create a mapping of prompts for debug info
+                original_prompts = {}
+                if args.debug:
+                    original_prompts = {p.get("id"): p for p in loaded_prompts}
+                
+                # Determine which IDs to print
+                ids_to_print = args.print if args.print else list(results.keys())
+                
+                # Sort the IDs to match the original order in the YAML/JSON
+                if loaded_prompts:
+                    # Filter ids_to_print to include only those in prompt_ids_ordered
+                    # and maintain the order from the original file
+                    sorted_ids = [pid for pid in prompt_ids_ordered if pid in ids_to_print]
+                    # Add any remaining IDs that might not be in prompt_ids_ordered
+                    sorted_ids.extend([pid for pid in ids_to_print if pid not in prompt_ids_ordered])
+                    ids_to_print = sorted_ids
+                
+                # Display results in the correct order
+                for prompt_id in ids_to_print:
+                    if prompt_id in results:
                         print(f"\n== RESULT: {prompt_id} ==\n")
-                        print(result)
+                        
+                        # Print debug info if enabled
+                        if args.debug and prompt_id in original_prompts:
+                            prompt_config = original_prompts[prompt_id]
+                            if args.verbose:
+                                print("Configuration:")
+                                for key, value in prompt_config.items():
+                                    if key != "prompt" and key != "id":
+                                        print(f"  {key}: {value}")
+                                print("\nPrompt:")
+                                print(prompt_config.get("prompt", ""))
+                                print("\nResult:")
+                            else:
+                                print("Configuration:", end=" ")
+                                config_str = ", ".join(f"{k}={v}" for k, v in prompt_config.items() 
+                                                     if k != "prompt" and k != "id")
+                                print(config_str)
+                                print("\nResult:")
+                        
+                        print(results[prompt_id])
                         print("\n" + "="*50 + "\n")
-                else:
-                    # Print only the specified prompt IDs
-                    for prompt_id in args.print:
-                        if prompt_id in results:
-                            print(f"\n== RESULT: {prompt_id} ==\n")
-                            print(results[prompt_id])
-                            print("\n" + "="*50 + "\n")
-                        else:
-                            print(f"Warning: No result found for prompt ID '{prompt_id}'")
+                    else:
+                        print(f"Warning: No result found for prompt ID '{prompt_id}'")
         except Exception as e:
             print(f"Error running inference: {e}")
     else:

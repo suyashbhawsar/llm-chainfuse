@@ -1,7 +1,9 @@
 import json
 import yaml
 import os
+import sys
 import logging
+import argparse
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Optional, Any, Union
 from model_providers import get_provider
@@ -295,13 +297,14 @@ class LLMInference:
             else:
                 raise ValueError("Unsupported file format. Use YAML or JSON.")
 
-    def run(self, file_path: str, output_file: Optional[str] = None) -> Dict[str, str]:
+    def run(self, file_path: str, output_file: Optional[str] = None, cli_args=None) -> Dict[str, str]:
         """
         Run inference on prompts from the given file and save results.
         
         Args:
             file_path: Path to prompt file
             output_file: Optional path to save results
+            cli_args: Arguments passed from CLI to control behavior
             
         Returns:
             Dictionary of prompt IDs to results
@@ -309,6 +312,9 @@ class LLMInference:
         prompts = self.load_prompts(file_path)
         if not prompts:
             raise ValueError("No prompts found in the input file.")
+        
+        # Store original prompt order to maintain sequence in output
+        prompt_ids_ordered = [p.get("id") for p in prompts]
         
         # Check if the file has global print settings
         print_config = self._extract_print_config(file_path)
@@ -324,16 +330,20 @@ class LLMInference:
         # Process the prompts    
         results = self.process_prompts(prompts)
         
-        # Handle printing based on settings in the YAML/JSON file
-        if print_config:
+        # Determine if CLI print mode is active
+        cli_print_mode = cli_args and hasattr(cli_args, 'print') and cli_args.print is not None
+        
+        # If print_config exists in YAML and we're not using CLI print mode, show results
+        if print_config and not cli_print_mode:
             print("\n=== LLM INFERENCE RESULTS (from YAML/JSON) ===\n")
             
             if print_config.get("print_all", False):
-                # Print all results
-                for prompt_id, result in results.items():
-                    print(f"\n== RESULT: {prompt_id} ==\n")
-                    print(result)
-                    print("\n" + "="*50 + "\n")
+                # Print all results in the original order
+                for prompt_id in prompt_ids_ordered:
+                    if prompt_id in results:
+                        print(f"\n== RESULT: {prompt_id} ==\n")
+                        print(results[prompt_id])
+                        print("\n" + "="*50 + "\n")
             elif print_config.get("print_ids"):
                 # Print only the specified prompt IDs
                 for prompt_id in print_config["print_ids"]:
@@ -343,6 +353,15 @@ class LLMInference:
                         print("\n" + "="*50 + "\n")
                     else:
                         print(f"Warning: No result found for prompt ID '{prompt_id}'")
+        elif not cli_print_mode:
+            # In non-print mode, just show completion status for each prompt
+            print("\n=== LLM INFERENCE STATUS ===\n")
+            for prompt_id in prompt_ids_ordered:
+                if prompt_id in results and results[prompt_id]:
+                    print(f"✅ Prompt '{prompt_id}': Success")
+                else:
+                    print(f"❌ Prompt '{prompt_id}': Failed or empty response")
+            print("\nUse --debug flag for more details or --print to see results\n")
         
         # Save results to file if requested
         if output_file:

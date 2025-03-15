@@ -59,20 +59,20 @@ export ANTHROPIC_API_KEY="your-anthropic-api-key"
 ### **Run Inference** (Basic Example)
 ```bash
 # Using YAML configuration
-python cli.py examples/input.yaml --output results.json
+python cli.py example-prompts.yaml --output results.json
 
 # Using JSON configuration
-python cli.py examples/input.json --output results.json
+python cli.py example-prompts.json --output results.json
 ```
 
 ### **Run with Specific Provider**
 ```bash
-python cli.py examples/input.yaml --provider anthropic
+python cli.py example-prompts.yaml --provider anthropic
 ```
 
 ### **Override Defaults from CLI**
 ```bash
-python cli.py examples/input.yaml --temperature 0.9 --max_tokens 500 --model gpt-4o --output results.json
+python cli.py example-prompts.yaml --temperature 0.9 --max_tokens 500 --model gpt-4o --output results.json
 ```
 
 ### **List Available Models**
@@ -89,21 +89,30 @@ python cli.py --list-providers
 
 ### **Validate Model & Parameters Before Execution**
 ```bash
-python cli.py examples/input.yaml --validate-models
+python cli.py example-prompts.yaml --validate-models
 ```
 
 ### **Print Results to Console**
 ```bash
-# Print all results
-python cli.py examples/input.yaml --print
+# Print all results (clean output format)
+python cli.py example-prompts.yaml --print
 
 # Print specific prompt results
-python cli.py examples/input.yaml --print summary critique
+python cli.py example-prompts.yaml --print summary critique
+```
+
+### **Debug Mode**
+```bash
+# Show detailed debug information including configuration and logs
+python cli.py example-prompts.yaml --print --debug
+
+# Enable more verbose debug output with full prompt text
+python cli.py example-prompts.yaml --print --debug -v
 ```
 
 ### **Include Context Files**
 ```bash
-python cli.py examples/input.yaml --context background:context1.txt examples:context2.txt
+python cli.py example-prompts.yaml --context background:context1.txt examples:context2.txt
 ```
 
 ---
@@ -117,10 +126,11 @@ Prompts can be defined in either **YAML** or **JSON** format with **custom param
 ```yaml
 # Optional printing configuration
 print:
-  print_all: false    # Set to true to print all results
+  print_all: false    # Set to true to print all results in YAML/JSON config
   print_ids:          # List of specific prompt IDs to print
     - summary
     - critique
+  # Note: CLI args (--print, --debug, -v) will override these settings
 
 prompts:
   - id: "intro"
@@ -161,7 +171,8 @@ prompts:
 {
   "print": {
     "print_all": false,
-    "print_ids": ["summary", "critique"]
+    "print_ids": ["summary", "critique"],
+    "_comment": "CLI args (--print, --debug, -v) will override these settings"
   },
   "prompts": [
     {
@@ -210,6 +221,11 @@ prompts:
 - **Dependent prompts run sequentially**, replacing `{{ variable_name }}` placeholders with previous outputs.
 - **Model and Parameter Validation** ensures that the selected model supports the requested parameters.
 - **Different providers** can be used for different prompts in the same workflow.
+- **Output Format Control**:
+  - Standard mode shows simple success/failure status
+  - Print mode displays complete results
+  - Debug mode reveals configuration details and logs
+  - All output is displayed in the same order as prompts appear in the configuration file
 
 ---
 
@@ -236,15 +252,20 @@ response = llm_ollama.call_api("Write a Python function", model="llama3.2")
 ### **Run with Configuration Files**
 ```python
 # Using YAML
-llm.run("examples/input.yaml", output_file="results.json")
+llm.run("example-prompts.yaml", output_file="results.json")
 
 # Using JSON
-llm.run("examples/input.json", output_file="results.json")
+llm.run("example-prompts.json", output_file="results.json")
+
+# With debug args (pass CLI args to control output format)
+import argparse
+args = argparse.Namespace(debug=True, verbose=False, print=["intro", "summary"])
+llm.run("example-prompts.yaml", output_file="results.json", cli_args=args)
 ```
 
 ### **Validate Model & Parameters in Python**
 ```python
-llm.validate_models("examples/input.yaml")
+llm.validate_models("example-prompts.yaml")
 ```
 
 ### **List Available Models in Python**
@@ -255,7 +276,52 @@ print(models)
 
 ---
 
-## 📌 Expected Output (`results.json`)
+## 📌 Output Formats
+
+### **Standard Run** (No output flags)
+```
+=== LLM INFERENCE STATUS ===
+
+✅ Prompt 'intro': Success
+✅ Prompt 'summary': Success
+✅ Prompt 'code_example': Success
+✅ Prompt 'independent': Success
+
+Use --debug flag for more details or --print to see results
+```
+
+### **Print Mode** (with `--print`)
+```
+=== LLM INFERENCE RESULTS ===
+
+== RESULT: intro ==
+
+DevOps is a combination of practices, tools, and cultural philosophies...
+
+==================================================
+
+== RESULT: summary ==
+
+DevOps is an approach that combines practices, tools, and cultural philosophies...
+
+==================================================
+```
+
+### **Debug Mode** (with `--print --debug`)
+```
+Using API key from environment variable: OPENAI_API_KEY
+2025-03-15 15:22:14,331 - INFO - OpenAI provider initialized
+...
+
+=== LLM INFERENCE RESULTS ===
+
+== RESULT: intro ==
+Configuration: provider=openai, model=gpt-4o, temperature=0.5...
+
+DevOps is a combination of practices...
+```
+
+### **JSON Output** (`results.json`)
 ```json
 {
     "intro": "DevOps integrates software development and IT operations...",

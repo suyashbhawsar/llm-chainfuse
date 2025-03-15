@@ -1,0 +1,35 @@
+# Optional printing configuration
+print:
+  print_all: true    # Set to true to print all results
+
+prompts:
+  - id: "intro"
+    provider: "openai"    # Optional, defaults to CLI provider or "openai"
+    prompt: "Explain DevOps in simple terms."
+    model: "gpt-4o"
+    temperature: 0.5
+    top_p: 0.9
+    seed: 42
+    max_tokens: 300
+    frequency_penalty: 0.1
+    presence_penalty: 0.1
+
+  - id: "summary"
+    provider: "openai"
+    model: "gpt-4o"
+    prompt: "Summarize the following: {{ intro }}"
+    temperature: 0.7
+    max_tokens: 150
+
+  - id: "code_example"
+    provider: "anthropic"
+    model: "claude-3-5-sonnet-latest"
+    prompt: "Create Python code based on this summary: {{ summary }}"
+    temperature: 0.2
+    max_tokens: 500
+
+  - id: "independent"
+    prompt: "What are the key principles of Site Reliability Engineering?"
+    model: "gpt-4o"
+    temperature: 0.6
+    seed: 1234
