@@ -5,7 +5,7 @@ print:
 prompts:
   - id: "intro"
     provider: "openai"    # Optional, defaults to CLI provider or "openai"
-    prompt: "Explain DevOps in simple terms."
+    prompt: "Explain OOP in simple terms."
     model: "gpt-4o"
     temperature: 0.5
     top_p: 0.9
@@ -22,11 +22,9 @@ prompts:
     max_tokens: 150
 
   - id: "code_example"
-    provider: "anthropic"
-    model: "claude-3-5-sonnet-latest"
+    provider: "openai"
+    model: "o3-mini"
     prompt: "Create Python code based on this summary: {{ summary }}"
-    temperature: 0.2
-    max_tokens: 500
 
   - id: "independent"
     prompt: "What are the key principles of Site Reliability Engineering?"
