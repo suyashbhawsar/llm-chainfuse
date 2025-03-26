@@ -14,53 +14,57 @@ def main():
 
     # Provider configuration
     provider_group = parser.add_argument_group("Provider Configuration")
-    provider_group.add_argument("--provider", type=str, default="openai",
+    provider_group.add_argument("-p", "--provider", type=str, default="openai",
                              help="LLM provider (openai, anthropic, ollama)")
-    provider_group.add_argument("--api-key", type=str,
+    provider_group.add_argument("-k", "--api-key", type=str,
                              help="API key for the selected provider (defaults to environment variable)")
     provider_group.add_argument("--provider-options", type=str,
                              help="JSON string of additional provider options")
 
     # Main arguments
-    parser.add_argument("file", nargs="?", type=str,
-                      help="Path to input file (YAML/JSON)")
-    parser.add_argument("--model", type=str, default="gpt-4o",
+    parser.add_argument("input", nargs="?", type=str,
+                      help="Path to input file (YAML/JSON) or direct text prompt")
+    parser.add_argument("prompt_args", nargs="*",
+                      help="Additional text for prompt (concatenated with input)")
+    parser.add_argument("-q", "--prompt", type=str,
+                      help="Explicit direct text prompt (bypasses file input)")
+    parser.add_argument("-m", "--model", type=str, default="gpt-4o",
                       help="Model to use for inference")
-    parser.add_argument("--temperature", type=float,
+    parser.add_argument("-t", "--temperature", type=float,
                       help="Temperature for randomness (0.0-2.0)")
-    parser.add_argument("--max_tokens", type=int,
+    parser.add_argument("-n", "--max_tokens", type=int,
                       help="Maximum tokens to generate")
     parser.add_argument("--top_p", type=float,
                       help="Top-p sampling (0.0-1.0)")
     # Optional OpenAI-specific parameters
     openai_group = parser.add_argument_group("OpenAI-specific Parameters")
-    openai_group.add_argument("--seed", type=int,
+    openai_group.add_argument("-s", "--seed", type=int,
                            help="Seed for reproducibility (OpenAI only)")
-    openai_group.add_argument("--frequency_penalty", type=float,
+    openai_group.add_argument("-f", "--frequency_penalty", type=float,
                            help="Frequency penalty (OpenAI only)")
     openai_group.add_argument("--presence_penalty", type=float,
                            help="Presence penalty (OpenAI only)")
     openai_group.add_argument("--logprobs", type=int,
                           help="Log probabilities (OpenAI only)")
 
-    parser.add_argument("--output", type=str,
+    parser.add_argument("-o", "--output", type=str,
                       help="Path to output file")
     parser.add_argument("--print", nargs="*",
                       help="Print results to console. Use without arguments to print all results, or specify prompt IDs to print specific results.")
 
     # Context files
-    parser.add_argument("--context", nargs="*",
+    parser.add_argument("-c", "--context", nargs="*",
                       help="List of context files (ID:path). Example: id1:context1.txt id2:context2.txt")
 
     # Utility functions
     utility_group = parser.add_argument_group("Utility Functions")
-    utility_group.add_argument("--list-models", action="store_true",
+    utility_group.add_argument("-l", "--list-models", action="store_true",
                             help="List available models for the selected provider")
     utility_group.add_argument("--list-providers", action="store_true",
                             help="List available providers")
     utility_group.add_argument("--validate-models", action="store_true",
                             help="Validate models & parameters in the prompt file")
-    utility_group.add_argument("--debug", action="store_true",
+    utility_group.add_argument("-d", "--debug", action="store_true",
                             help="Enable debug mode with detailed output about LLM inference")
     utility_group.add_argument("-v", "--verbose", action="store_true",
                             help="Enable more verbose debug output (use with --debug)")
@@ -175,25 +179,49 @@ def main():
 
     # Handle validate models functionality
     if args.validate_models:
-        if not args.file:
+        if not args.input:
             print("Error: Please provide a YAML/JSON file for model validation.")
             return
-        llm.validate_models(args.file)
+        llm.validate_models(args.input)
         return
 
+    # Check if we're in direct prompt mode
+    in_direct_prompt_mode = False
+    direct_prompt_text = ""
+
+    # Explicit --prompt argument takes precedence
+    if args.prompt:
+        in_direct_prompt_mode = True
+        direct_prompt_text = args.prompt
+    # Otherwise, check if input is a file or direct prompt
+    elif args.input:
+        # If additional prompt arguments were provided, treat input as part of the prompt
+        if args.prompt_args:
+            in_direct_prompt_mode = True
+            direct_prompt_text = args.input + " " + " ".join(args.prompt_args)
+        else:
+            # Check if input is a valid file
+            if os.path.isfile(args.input):
+                # Input is a file, will process as YAML/JSON
+                pass
+            else:
+                # Input is not a file, treat as direct prompt
+                in_direct_prompt_mode = True
+                direct_prompt_text = args.input
+
     # Handle YAML/JSON prompt execution
-    if args.file:
+    if not in_direct_prompt_mode and args.input:
         try:
             # Load the prompts first to get the correct order for display
             loaded_prompts = []
             try:
-                loaded_prompts = llm.load_prompts(args.file)
+                loaded_prompts = llm.load_prompts(args.input)
                 prompt_ids_ordered = [p.get("id") for p in loaded_prompts]
             except Exception as e:
                 logging.warning(f"Could not load prompts for ordering: {e}")
 
             # Pass args to run method to control behavior
-            results = llm.run(args.file, args.output, cli_args=args)
+            results = llm.run(args.input, args.output, cli_args=args)
 
             # Handle printing results if requested (CLI approach)
             if hasattr(args, 'print') and args.print is not None:
@@ -245,8 +273,27 @@ def main():
                         print(f"Warning: No result found for prompt ID '{prompt_id}'")
         except Exception as e:
             print(f"Error running inference: {e}")
+    elif in_direct_prompt_mode:
+        # Direct prompt mode
+        try:
+            # Print the prompt if debug is enabled
+            if args.debug:
+                print("\n=== DIRECT PROMPT ===\n")
+                print(direct_prompt_text)
+                print("\n=== RESPONSE ===\n")
+
+            # Call the LLM directly with the provided prompt
+            result = llm.call_api(direct_prompt_text)
+
+            # Print the result
+            if result:
+                print(result)
+            else:
+                print("Error: No response received from the model.")
+        except Exception as e:
+            print(f"Error running inference: {e}")
     else:
-        print("Error: No input file provided. Use --list-models, --list-providers, or specify a YAML/JSON file.")
+        print("Error: No input provided. Provide a prompt or file, or use --list-models, --list-providers.")
 
 
 if __name__ == "__main__":
