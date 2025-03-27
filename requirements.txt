@@ -11,4 +11,7 @@ openai
 # Anthropic
 anthropic
 
+# Google Gemini
+google-generativeai
+
 # For local models like Ollama, only requests is needed (included above)

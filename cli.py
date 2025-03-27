@@ -138,6 +138,8 @@ def main():
                 env_var = "OPENAI_API_KEY"
             elif args.provider.lower() == "anthropic":
                 env_var = "ANTHROPIC_API_KEY"
+            elif args.provider.lower() == "gemini":
+                env_var = "GOOGLE_API_KEY"
             else:
                 env_var = None
 

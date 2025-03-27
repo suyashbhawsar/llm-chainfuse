@@ -15,6 +15,7 @@
 - **Use with Context**: `python cli.py example-prompts.yaml --context background:context1.txt examples:context2.txt`
 - **Direct Prompt**: `python cli.py "Explain quantum computing in simple terms"`
 - **Streaming Output**: `python cli.py -p openai -m gpt-4o --stream "Tell me a story"` (shows response as it's generated, direct prompts only)
+- **Gemini Example**: `python cli.py -p gemini -m gemini-1.5-flash "Explain machine learning"`
 
 ## Output Format
 - **Default Mode**: Shows results immediately as they arrive from LLMs
@@ -116,3 +117,48 @@
 - **Formatting**: 4-space indentation, max line length ~100 characters
 - **Parameter Handling**: Use **kwargs for flexible parameter passing with defaults
 - **API Design**: Maintain backward compatibility when adding new features
+
+# Using the LLM Inference Framework with Claude
+
+This document provides guidance on using the LLM Inference Framework with the Anthropic Claude model.
+
+## Supported Claude Models
+The framework currently supports the following Claude models:
+
+- `claude-3-sonnet-20240229`
+
+You can list the available Claude models using the following command:
+
+```bash
+python cli.py --provider anthropic --list-models
+```
+
+## Example Usage
+
+To use the Claude model, you can run the following command:
+
+```bash
+python cli.py -p anthropic -m claude-3-sonnet-20240229 "Explain quantum computing in simple terms."
+```
+
+This will use the `claude-3-sonnet-20240229` model to generate a response for the given prompt.
+
+You can also use the framework's YAML configuration to run prompts with the Claude model:
+
+```yaml
+prompts:
+  - id: "claude_example"
+    provider: "anthropic"
+    model: "claude-3-sonnet-20240229"
+    prompt: "Explain machine learning concepts"
+    temperature: 0.7
+    max_tokens: 500
+```
+
+Save this YAML file (e.g., `example-prompts.yaml`) and run:
+
+```bash
+python cli.py example-prompts.yaml --provider anthropic
+```
+
+This will execute the prompt defined in the YAML file using the Claude model.

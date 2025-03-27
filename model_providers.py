@@ -512,12 +512,201 @@ class OllamaProvider(ModelProvider):
         return issues
 
 
+class GeminiProvider(ModelProvider):
+    """Google Gemini model provider implementation"""
+
+    def __init__(self):
+        """Initialize instance variables"""
+        self.client = None
+        self.api_key = None
+        self.default_model = "gemini-1.5-flash"  # Updated to a widely available model
+
+    def initialize(self, api_key: Optional[str] = None, **kwargs) -> None:
+        """Initialize the Gemini client"""
+        try:
+            import google.generativeai as genai
+            # Use GOOGLE_API_KEY environment variable if api_key is not provided
+            if api_key is None:
+                import os
+                api_key = os.environ.get("GOOGLE_API_KEY")
+
+            genai.configure(api_key=api_key)
+            self.client = genai
+            self.api_key = api_key
+            logging.info("Gemini provider initialized successfully")
+        except ImportError:
+            logging.error("Google Generative AI package not installed. Install with: pip install google-generativeai")
+            raise
+
+    def list_models(self) -> List[str]:
+        """List available models from Gemini"""
+        try:
+            # Attempt to dynamically get the list of models
+            models = self.client.list_models()
+            model_names = [model.name.split('/')[-1] for model in models if "generateContent" in model.supported_generation_methods]
+            return model_names
+        except Exception as e:
+            logging.warning(f"Could not retrieve Gemini models dynamically: {e}")
+            # Fallback to commonly available models
+            return [
+                "gemini-1.5-pro",
+                "gemini-1.5-flash",
+                "gemini-pro",
+                "gemini-pro-vision"
+            ]
+
+    def generate(self, prompt: str, model: str, stream: bool = False, **params) -> Union[str, Iterator[str]]:
+        """Generate text using Gemini models"""
+        try:
+            # Strip 'models/' prefix if it exists
+            if model.startswith("models/"):
+                model = model.replace("models/", "")
+
+            # Handle legacy model names
+            if model == "gemini-pro":
+                model = "gemini-1.5-pro"  # Map to the stable successor
+                logging.info(f"Model 'gemini-pro' mapped to '{model}'")
+            elif model == "gemini-pro-vision":
+                # Keep the same name as it appears to be still supported
+                logging.info(f"Using model 'gemini-pro-vision'")
+            elif model == "gemini-2.0-pro":
+                # 2.0-pro isn't available yet, use 1.5-pro instead
+                model = "gemini-1.5-pro"
+                logging.info(f"Model 'gemini-2.0-pro' not available, using '{model}' instead")
+            elif model == "gemini-2.0-flash" and "gemini-2.0-flash" not in self.list_models():
+                # If 2.0-flash isn't available, use 1.5-flash
+                model = "gemini-1.5-flash"
+                logging.info(f"Model 'gemini-2.0-flash' not available, using '{model}' instead")
+
+            # Get the model
+            model_instance = self.client.GenerativeModel(model)
+
+            # Start with minimal parameters
+            generation_config = {}
+            if "temperature" in params:
+                generation_config["temperature"] = params["temperature"]
+            if "max_tokens" in params:
+                generation_config["max_output_tokens"] = params["max_tokens"]
+            if "top_p" in params:
+                generation_config["top_p"] = params["top_p"]
+            if "top_k" in params:
+                generation_config["top_k"] = params["top_k"]
+
+            if stream:
+                return self.generate_stream(model_instance, prompt, generation_config)
+            else:
+                # Generate content directly (don't use chat)
+                try:
+                    response = model_instance.generate_content(prompt, generation_config=generation_config)
+                    return response.text.strip()
+                except Exception as e:
+                    # More specific error message for model not found
+                    if "404" in str(e) and "not found" in str(e):
+                        available_models = ", ".join(self.list_models())
+                        error_msg = f"Model '{model}' not found. Available models: {available_models}"
+                        logging.error(error_msg)
+                        return f"Error: {error_msg}"
+                    else:
+                        raise
+
+        except Exception as e:
+            error_msg = f"Gemini API call failed: {e}"
+            logging.error(error_msg)
+
+            # Return a more helpful message rather than None
+            return f"Error: {error_msg}"
+
+    def generate_stream(self, model_instance, prompt: str, generation_config: Dict[str, Any]) -> Iterator[str]:
+        """Generate text using Gemini models with streaming enabled"""
+        try:
+            # Direct streaming without using chat
+            response = model_instance.generate_content(
+                prompt,
+                generation_config=generation_config,
+                stream=True
+            )
+
+            for chunk in response:
+                if hasattr(chunk, 'text') and chunk.text:
+                    yield chunk.text
+        except Exception as e:
+            logging.error(f"Gemini streaming API call failed: {e}")
+            yield f"Error: Gemini streaming API call failed: {e}"
+
+    def get_default_params(self) -> Dict[str, Any]:
+        """Return default parameters for Gemini models"""
+        return {
+            "temperature": 0.7,
+            "max_tokens": 1000,
+            "top_p": 1.0,
+            "top_k": 40
+        }
+
+    def validate_model(self, model_name: str, params: Dict[str, Any]) -> List[str]:
+        """Validate if a model name and parameters are compatible with Gemini"""
+        issues = []
+        try:
+            # Remove 'models/' prefix if it exists
+            if model_name.startswith("models/"):
+                model_name = model_name.replace("models/", "")
+
+            # Handle legacy model names
+            if model_name == "gemini-pro":
+                model_name = "gemini-1.5-pro"
+                issues.append(f"Note: Model 'gemini-pro' will be mapped to '{model_name}'")
+            elif model_name == "gemini-pro-vision":
+                # Keep as is
+                pass
+            elif model_name == "gemini-2.0-pro":
+                model_name = "gemini-1.5-pro"
+                issues.append(f"Note: Model 'gemini-2.0-pro' will be mapped to '{model_name}'")
+            elif model_name == "gemini-2.0-flash":
+                # Check if actually available
+                try:
+                    available_models = self.list_models()
+                    if "gemini-2.0-flash" not in available_models:
+                        model_name = "gemini-1.5-flash"
+                        issues.append(f"Note: Model 'gemini-2.0-flash' not found, will use '{model_name}'")
+                except:
+                    # If can't check, assume 1.5 is safer
+                    model_name = "gemini-1.5-flash"
+                    issues.append(f"Note: Unable to verify 'gemini-2.0-flash', will use '{model_name}'")
+
+            # Check if model exists
+            available_models = self.list_models()
+            if model_name not in available_models:
+                # Find the closest match
+                if "gemini-1.5-pro" in available_models:
+                    suggested_model = "gemini-1.5-pro"
+                elif "gemini-1.5-flash" in available_models:
+                    suggested_model = "gemini-1.5-flash"
+                else:
+                    suggested_model = available_models[0] if available_models else "gemini-1.5-pro"
+
+                issues.append(f"Model '{model_name}' not found in Gemini's model list. Suggested alternative: '{suggested_model}'. Available models: {', '.join(available_models)}")
+        except Exception as e:
+            issues.append(f"Error validating model '{model_name}': {e}")
+
+        # Validate parameters
+        if "temperature" in params and not 0 <= params["temperature"] <= 1:
+            issues.append("Temperature must be between 0 and 1")
+        if "max_tokens" in params and params["max_tokens"] < 1:
+            issues.append("max_tokens must be positive")
+        if "top_p" in params and not 0 <= params["top_p"] <= 1:
+            issues.append("top_p must be between 0 and 1")
+        if "top_k" in params and params["top_k"] < 1:
+            issues.append("top_k must be positive")
+
+        return issues
+
+
 def get_provider(provider_name: str) -> ModelProvider:
     """Factory function to get the appropriate provider instance"""
     providers = {
         "openai": OpenAIProvider,
         "anthropic": AnthropicProvider,
         "ollama": OllamaProvider,
+        "gemini": GeminiProvider,
         # Add more providers as they are implemented
     }
 

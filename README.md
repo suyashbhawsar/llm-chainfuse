@@ -3,7 +3,7 @@
 ## 🚀 Overview
 This project provides a **flexible and developer-friendly** framework to interact with Large Language Models (LLMs). It supports:
 
-- **Multiple LLM Providers** 🌐 – Work with OpenAI, Anthropic Claude, and Ollama.
+- **Multiple LLM Providers** 🌐 – Work with OpenAI, Anthropic Claude, Ollama, and Google Gemini.
 - **Independent Prompts** 🚀 – Process multiple prompts in parallel.
 - **Chained Prompts (Piping)** 🔗 – Use outputs of one prompt as input for another.
 - **Advanced Parameter Tuning** 🎯 – Customize model, temperature, top_p, max_tokens, seed, penalties, etc.
@@ -50,6 +50,9 @@ export OPENAI_API_KEY="your-openai-api-key"
 # For Anthropic
 export ANTHROPIC_API_KEY="your-anthropic-api-key"
 
+# For Google Gemini
+export GOOGLE_API_KEY="your-gemini-api-key"
+
 # For Ollama - no API key needed (runs locally)
 ```
 (For Windows, use `set OPENAI_API_KEY=your-api-key-here`)
@@ -76,6 +79,7 @@ python cli.py example-prompts.json --output results.json
 ### **Run with Specific Provider**
 ```bash
 python cli.py example-prompts.yaml --provider anthropic
+python cli.py example-prompts.yaml --provider gemini
 ```
 
 ### **Override Defaults from CLI**
@@ -90,6 +94,7 @@ python cli.py -p openai -m gpt-4o --stream "Tell me a story"
 
 # Stream with specific provider
 python cli.py -p anthropic -m claude-3-sonnet-20240229 --stream "Explain quantum computing"
+python cli.py -p gemini -m gemini-1.5-flash --stream "What is machine learning?"
 
 # Stream with Ollama
 python cli.py -p ollama -m llama3.2:latest --stream "What is machine learning?"
@@ -99,6 +104,7 @@ python cli.py -p ollama -m llama3.2:latest --stream "What is machine learning?"
 ```bash
 python cli.py --provider openai --list-models
 python cli.py --provider anthropic --list-models
+python cli.py --provider gemini --list-models
 python cli.py --provider ollama --list-models
 ```
 
@@ -184,6 +190,13 @@ prompts:
     temperature: 0.2
     max_tokens: 500
 
+  - id: "gemini_example"
+    provider: "gemini"
+    model: "gemini-1.5-flash"
+    prompt: "Explain machine learning concepts"
+    temperature: 0.7
+    max_tokens: 500
+
   - id: "independent"
     prompt: "What are the key principles of Site Reliability Engineering?"
     model: "gpt-4-turbo"
@@ -227,6 +240,14 @@ prompts:
       "model": "llama3.2",
       "prompt": "Create Python code based on this summary: {{ summary }}",
       "temperature": 0.2,
+      "max_tokens": 500
+    },
+    {
+      "id": "gemini_example",
+      "provider": "gemini",
+      "model": "gemini-1.5-flash",
+      "prompt": "Explain machine learning concepts",
+      "temperature": 0.7,
       "max_tokens": 500
     },
     {
@@ -314,6 +335,7 @@ print(models)
 ✅ Prompt 'intro': Success
 ✅ Prompt 'summary': Success
 ✅ Prompt 'code_example': Success
+✅ Prompt 'gemini_example': Success
 ✅ Prompt 'independent': Success
 
 Use --debug flag for more details or --print to see results
@@ -356,6 +378,7 @@ DevOps is a combination of practices...
     "intro": "DevOps integrates software development and IT operations...",
     "summary": "DevOps improves CI/CD, automation, and collaboration...",
     "code_example": "def deploy_app():\n    # Implementation of CI/CD pipeline\n    ...",
+    "gemini_example": "Machine learning is a subset of artificial intelligence...",
     "independent": "SRE emphasizes reliability, automation, monitoring, and error budgets."
 }
 ```
@@ -378,14 +401,15 @@ python cli.py examples/input.json
 ### **2️⃣ Provider-Specific Parameters**
 Each provider supports different parameters. The framework automatically handles parameter compatibility:
 
-| Parameter | OpenAI | Anthropic | Ollama |
-|-----------|--------|-----------|--------|
-| temperature | ✅ | ✅ | ✅ |
-| max_tokens | ✅ | ✅ | ✅ (as num_predict) |
-| top_p | ✅ | ✅ | ✅ |
-| seed | ✅ | ❌ | ❌ |
-| frequency_penalty | ✅ | ❌ | ❌ |
-| presence_penalty | ✅ | ❌ | ❌ |
+| Parameter | OpenAI | Anthropic | Ollama | Gemini |
+|-----------|--------|-----------|--------|---------|
+| temperature | ✅ | ✅ | ✅ | ✅ |
+| max_tokens | ✅ | ✅ | ✅ (as num_predict) | ✅ |
+| top_p | ✅ | ✅ | ✅ | ✅ |
+| seed | ✅ | ❌ | ❌ | ❌ |
+| frequency_penalty | ✅ | ❌ | ❌ | ❌ |
+| presence_penalty | ✅ | ❌ | ❌ | ❌ |
+| top_k | ❌ | ✅ | ❌ | ✅ |
 
 ### **3️⃣ Override Defaults (Per Prompt or CLI)**
 - If a **parameter is defined in YAML/JSON**, it overrides global defaults.
@@ -458,6 +482,7 @@ This project is licensed under the **License**.
 ```bash
 export OPENAI_API_KEY="your-openai-key"
 export ANTHROPIC_API_KEY="your-anthropic-key"
+export GOOGLE_API_KEY="your-gemini-key"
 ```
 
 ### **Issue: API Call Limit Exceeded**
