@@ -4,8 +4,8 @@ import os
 import sys
 import logging
 import argparse
-from concurrent.futures import ThreadPoolExecutor
-from typing import Dict, List, Optional, Any, Union
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Dict, List, Optional, Any, Union, Callable
 from model_providers import get_provider
 
 # Configure logging
@@ -174,12 +174,15 @@ class LLMInference:
 
         return result
 
-    def process_prompts(self, prompts: List[Dict[str, Any]]) -> Dict[str, str]:
+    def process_prompts(self, prompts: List[Dict[str, Any]],
+                        stream_callback: Optional[Callable[[str, str], None]] = None) -> Dict[str, str]:
         """
         Process prompts considering dependencies and custom parameters.
 
         Args:
             prompts: List of prompt configurations
+            stream_callback: Optional callback function that takes prompt_id and result
+                           to handle streaming output
 
         Returns:
             Dictionary of prompt IDs to results
@@ -194,7 +197,8 @@ class LLMInference:
 
         # Process independent prompts in parallel
         with ThreadPoolExecutor() as executor:
-            futures = []
+            future_to_prompt = {}
+
             for p in independent_prompts:
                 # Get the provider for this prompt
                 provider_name = p.get("provider", self.provider_name)
@@ -208,37 +212,46 @@ class LLMInference:
                         prompt_params[k] = v
 
                 # Create a function that will process this prompt with the correct provider
-                def process_with_provider(prompt_text, provider_name, model_name, params):
+                def process_with_provider(prompt_config, provider_name, model_name, params):
                     try:
                         prompt_provider = get_provider(provider_name)
                         prompt_provider.initialize()
-                        return prompt_provider.generate(prompt_text, model_name, **params)
+                        return prompt_config["id"], prompt_provider.generate(prompt_config["prompt"], model_name, **params)
                     except Exception as e:
                         logging.error(f"Error with provider {provider_name}: {e}")
-                        return None
+                        return prompt_config["id"], None
 
                 # Submit the task to the executor
-                futures.append(executor.submit(
+                future = executor.submit(
                     process_with_provider,
-                    p["prompt"],
+                    p,
                     provider_name,
                     model_name,
                     prompt_params
-                ))
+                )
+                future_to_prompt[future] = p
 
-            # Collect the results
-            responses = [future.result() for future in futures]
+            # Process results as they come in
+            for future in as_completed(future_to_prompt):
+                prompt_id, response = future.result()
+                prompt = future_to_prompt[future]
 
-        # Store the results
-        for p, response in zip(independent_prompts, responses):
-            if response is not None:
-                self.results[p["id"]] = response
-                results[p["id"]] = response
-            else:
-                logging.error(f"Failed to get response for prompt ID: {p['id']}")
-                # Store empty response to prevent errors in dependent prompts
-                self.results[p["id"]] = ""
-                results[p["id"]] = ""
+                if response is not None:
+                    self.results[prompt_id] = response
+                    results[prompt_id] = response
+
+                    # Call streaming callback if provided
+                    if stream_callback:
+                        stream_callback(prompt_id, response)
+                else:
+                    logging.error(f"Failed to get response for prompt ID: {prompt_id}")
+                    # Store empty response to prevent errors in dependent prompts
+                    self.results[prompt_id] = ""
+                    results[prompt_id] = ""
+
+                    # Call streaming callback with empty result if provided
+                    if stream_callback:
+                        stream_callback(prompt_id, "")
 
         # Process dependent prompts sequentially
         for p in dependent_prompts:
@@ -266,15 +279,27 @@ class LLMInference:
                 if response is not None:
                     self.results[p["id"]] = response
                     results[p["id"]] = response
+
+                    # Call streaming callback if provided
+                    if stream_callback:
+                        stream_callback(p["id"], response)
                 else:
                     logging.error(f"Failed to get response for prompt ID: {p['id']}")
                     # Store empty response to prevent further errors
                     self.results[p["id"]] = ""
                     results[p["id"]] = ""
+
+                    # Call streaming callback with empty result if provided
+                    if stream_callback:
+                        stream_callback(p["id"], "")
             except Exception as e:
                 logging.error(f"Error processing prompt {p['id']} with provider {provider_name}: {e}")
                 self.results[p["id"]] = ""
                 results[p["id"]] = ""
+
+                # Call streaming callback with empty result if provided
+                if stream_callback:
+                    stream_callback(p["id"], "")
 
         return results
 
@@ -326,61 +351,182 @@ class LLMInference:
         if self.provider_name not in providers_needed:
             logging.info(f"Default provider '{self.provider_name}' not used in this run")
 
-        # Process the prompts
-        results = self.process_prompts(prompts)
-
         # Determine CLI modes
         cli_print_mode = cli_args and hasattr(cli_args, 'print') and cli_args.print is not None
         cli_silent_mode = cli_args and hasattr(cli_args, 'silent') and cli_args.silent
         cli_output_file = cli_args and hasattr(cli_args, 'output') and cli_args.output
+        cli_batch_mode = cli_args and hasattr(cli_args, 'batch') and cli_args.batch
+        cli_show_prompts = cli_args and hasattr(cli_args, 'show_prompts') and cli_args.show_prompts
 
-        # If print_config exists in YAML and we're not in silent mode
-        # and we don't have CLI print args, use the YAML print config
-        if print_config and not cli_silent_mode and not cli_print_mode:
-            print("\n=== LLM INFERENCE RESULTS (from YAML/JSON) ===\n")
+        # Create prompt mapping for display
+        prompts_dict = {p.get("id"): p for p in prompts}
 
-            if print_config.get("print_all", False):
-                # Print all results in the original order
-                for prompt_id in prompt_ids_ordered:
+        # Define output callback function for immediate display (default behavior)
+        output_callback = None
+        if not cli_batch_mode and not cli_silent_mode:
+            def immediate_output(prompt_id, result):
+                if not result:
+                    return
+
+                print(f"\n== RESULT: {prompt_id} ==\n")
+
+                # Print prompt if requested
+                if cli_show_prompts and prompt_id in prompts_dict:
+                    prompt_config = prompts_dict[prompt_id]
+                    prompt_text = prompt_config.get("prompt", "")
+
+                    # If this is a dependent prompt (with variables), show the resolved version
+                    if "{{" in prompt_text and prompt_id in self.resolved_prompts:
+                        print("Original Prompt:")
+                        print(prompt_text)
+                        print("\nResolved Prompt:")
+                        print(self.resolved_prompts[prompt_id])
+                    else:
+                        print("Prompt:")
+                        print(prompt_text)
+                    print("\nResponse:")
+
+                # Print debug info if enabled
+                if cli_args.debug and prompt_id in prompts_dict:
+                    prompt_config = prompts_dict[prompt_id]
+                    if cli_args.verbose:
+                        print("Configuration:")
+                        for key, value in prompt_config.items():
+                            if key != "prompt" and key != "id":
+                                print(f"  {key}: {value}")
+                        if not cli_show_prompts:  # Don't duplicate prompt if already shown
+                            print("\nPrompt:")
+                            print(prompt_config.get("prompt", ""))
+                        print("\nResult:")
+                    else:
+                        print("Configuration:", end=" ")
+                        config_str = ", ".join(f"{k}={v}" for k, v in prompt_config.items()
+                                             if k != "prompt" and k != "id")
+                        print(config_str)
+                        print("\nResult:")
+
+                print(result)
+                print("\n" + "="*50 + "\n")
+
+            output_callback = immediate_output
+
+            # Print header for immediate output mode
+            if not cli_silent_mode:
+                print("\n=== LLM INFERENCE RESULTS ===\n")
+
+        # Process the prompts
+        results = self.process_prompts(prompts, output_callback)
+
+        # If in batch mode and not in silent mode, print results
+        if cli_batch_mode and not cli_silent_mode:
+            # If print_config exists in YAML and we don't have CLI print args, use the YAML print config
+            if print_config and not cli_print_mode:
+                print("\n=== LLM INFERENCE RESULTS (from YAML/JSON) ===\n")
+
+                if print_config.get("print_all", False):
+                    # Print all results in the original order
+                    for prompt_id in prompt_ids_ordered:
+                        if prompt_id in results:
+                            print(f"\n== RESULT: {prompt_id} ==\n")
+                            # Show the prompt if show_prompts is enabled
+                            if cli_args and cli_args.show_prompts:
+                                for p in prompts:
+                                    if p.get("id") == prompt_id:
+                                        prompt_text = p.get("prompt", "")
+                                        if "{{" in prompt_text and prompt_id in self.resolved_prompts:
+                                            print("Original Prompt:")
+                                            print(prompt_text)
+                                            print("\nResolved Prompt:")
+                                            print(self.resolved_prompts[prompt_id])
+                                        else:
+                                            print("Prompt:")
+                                            print(prompt_text)
+                                        print("\nResponse:")
+                                        break
+                            print(results[prompt_id])
+                            print("\n" + "="*50 + "\n")
+                elif print_config.get("print_ids"):
+                    # Print only the specified prompt IDs
+                    for prompt_id in print_config["print_ids"]:
+                        if prompt_id in results:
+                            print(f"\n== RESULT: {prompt_id} ==\n")
+                            # Show the prompt if show_prompts is enabled
+                            if cli_args and cli_args.show_prompts:
+                                for p in prompts:
+                                    if p.get("id") == prompt_id:
+                                        prompt_text = p.get("prompt", "")
+                                        if "{{" in prompt_text and prompt_id in self.resolved_prompts:
+                                            print("Original Prompt:")
+                                            print(prompt_text)
+                                            print("\nResolved Prompt:")
+                                            print(self.resolved_prompts[prompt_id])
+                                        else:
+                                            print("Prompt:")
+                                            print(prompt_text)
+                                        print("\nResponse:")
+                                        break
+                            print(results[prompt_id])
+                            print("\n" + "="*50 + "\n")
+                        else:
+                            print(f"Warning: No result found for prompt ID '{prompt_id}'")
+            else:
+                # Determine which IDs to print
+                if cli_print_mode:
+                    ids_to_print = cli_args.print
+                else:
+                    ids_to_print = list(results.keys())
+
+                print("\n=== LLM INFERENCE RESULTS ===\n")
+
+                # Sort the IDs to match the original order in the YAML/JSON
+                if prompt_ids_ordered:
+                    # Filter ids_to_print to include only those in prompt_ids_ordered
+                    # and maintain the order from the original file
+                    sorted_ids = [pid for pid in prompt_ids_ordered if pid in ids_to_print]
+                    # Add any remaining IDs that might not be in prompt_ids_ordered
+                    sorted_ids.extend([pid for pid in ids_to_print if pid not in prompt_ids_ordered])
+                    ids_to_print = sorted_ids
+
+                # Display results in the correct order
+                for prompt_id in ids_to_print:
                     if prompt_id in results:
                         print(f"\n== RESULT: {prompt_id} ==\n")
-                        # Show the prompt if show_prompts is enabled
-                        if cli_args and cli_args.show_prompts:
-                            for p in prompts:
-                                if p.get("id") == prompt_id:
-                                    prompt_text = p.get("prompt", "")
-                                    if "{{" in prompt_text and prompt_id in self.resolved_prompts:
-                                        print("Original Prompt:")
-                                        print(prompt_text)
-                                        print("\nResolved Prompt:")
-                                        print(self.resolved_prompts[prompt_id])
-                                    else:
-                                        print("Prompt:")
-                                        print(prompt_text)
-                                    print("\nResponse:")
-                                    break
-                        print(results[prompt_id])
-                        print("\n" + "="*50 + "\n")
-            elif print_config.get("print_ids"):
-                # Print only the specified prompt IDs
-                for prompt_id in print_config["print_ids"]:
-                    if prompt_id in results:
-                        print(f"\n== RESULT: {prompt_id} ==\n")
-                        # Show the prompt if show_prompts is enabled
-                        if cli_args and cli_args.show_prompts:
-                            for p in prompts:
-                                if p.get("id") == prompt_id:
-                                    prompt_text = p.get("prompt", "")
-                                    if "{{" in prompt_text and prompt_id in self.resolved_prompts:
-                                        print("Original Prompt:")
-                                        print(prompt_text)
-                                        print("\nResolved Prompt:")
-                                        print(self.resolved_prompts[prompt_id])
-                                    else:
-                                        print("Prompt:")
-                                        print(prompt_text)
-                                    print("\nResponse:")
-                                    break
+
+                        # Print prompt if requested
+                        if cli_show_prompts and prompt_id in prompts_dict:
+                            prompt_config = prompts_dict[prompt_id]
+                            prompt_text = prompt_config.get("prompt", "")
+
+                            # If this is a dependent prompt (with variables), show the resolved version
+                            if "{{" in prompt_text and prompt_id in self.resolved_prompts:
+                                print("Original Prompt:")
+                                print(prompt_text)
+                                print("\nResolved Prompt:")
+                                print(self.resolved_prompts[prompt_id])
+                            else:
+                                print("Prompt:")
+                                print(prompt_text)
+                            print("\nResponse:")
+
+                        # Print debug info if enabled
+                        if cli_args.debug and prompt_id in prompts_dict:
+                            prompt_config = prompts_dict[prompt_id]
+                            if cli_args.verbose:
+                                print("Configuration:")
+                                for key, value in prompt_config.items():
+                                    if key != "prompt" and key != "id":
+                                        print(f"  {key}: {value}")
+                                if not cli_show_prompts:  # Don't duplicate prompt if already shown
+                                    print("\nPrompt:")
+                                    print(prompt_config.get("prompt", ""))
+                                print("\nResult:")
+                            else:
+                                print("Configuration:", end=" ")
+                                config_str = ", ".join(f"{k}={v}" for k, v in prompt_config.items()
+                                                    if k != "prompt" and k != "id")
+                                print(config_str)
+                                print("\nResult:")
+
                         print(results[prompt_id])
                         print("\n" + "="*50 + "\n")
                     else:

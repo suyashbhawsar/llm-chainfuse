@@ -2,11 +2,12 @@
 
 ## Build & Run Commands
 - **Core Installation**: `pip install -r requirements.txt`
-- **Basic Run**: `python cli.py example-prompts.yaml` (prints all results to terminal)
+- **Basic Run**: `python cli.py example-prompts.yaml` (prints results as they arrive)
 - **Save Output to File**: `python cli.py example-prompts.yaml -o results.json` (prints results and saves to file)
 - **Hide Terminal Output**: `python cli.py example-prompts.yaml -o results.json --silent` (only saves to file)
 - **Print Specific Results**: `python cli.py example-prompts.yaml --print summary critique` (only prints specified prompts)
 - **Show Prompts**: `python cli.py example-prompts.yaml --show-prompts` (shows original and resolved prompts with results)
+- **Batch Mode**: `python cli.py example-prompts.yaml --batch` (waits for all prompts to complete before displaying results)
 - **Debug Mode**: `python cli.py example-prompts.yaml --debug` (shows configs and more info about LLM results)
 - **Verbose Debug**: `python cli.py example-prompts.yaml --debug -v` (displays full prompts and detailed configs)
 - **Model Listing**: `python cli.py --provider openai --list-models`
@@ -15,11 +16,34 @@
 - **Direct Prompt**: `python cli.py "Explain quantum computing in simple terms"`
 
 ## Output Format
-- **Standard Run**: Shows complete results for each prompt
+- **Default Mode**: Shows results immediately as they arrive from LLMs
   ```
   === LLM INFERENCE RESULTS ===
 
   == RESULT: intro ==
+
+  [Output text...]
+
+  ==================================================
+
+  == RESULT: summary ==
+
+  [Output text...]
+
+  ==================================================
+  ```
+
+- **Batch Mode**: Shows all results after all prompts complete
+  ```
+  === LLM INFERENCE RESULTS ===
+
+  == RESULT: intro ==
+
+  [Output text...]
+
+  ==================================================
+
+  == RESULT: summary ==
 
   [Output text...]
 

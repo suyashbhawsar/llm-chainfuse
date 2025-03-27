@@ -56,6 +56,8 @@ def main():
                       help="Print specific results (specify prompt IDs). If not specified, all results are printed by default.")
     parser.add_argument("--show-prompts", action="store_true",
                       help="Show the actual prompts sent to the LLM (with resolved variables)")
+    parser.add_argument("--batch", action="store_true",
+                      help="Wait for all prompts to complete before displaying results")
 
     # Context files
     parser.add_argument("-c", "--context", nargs="*",
@@ -314,6 +316,8 @@ def main():
                     print("\n=== RESPONSE ===\n")
 
             # Call the LLM directly with the provided prompt
+            # For direct prompts, the --stream flag doesn't change behavior
+            # since there's only one prompt being processed
             result = llm.call_api(direct_prompt_text)
 
             # Print the result if not in silent mode

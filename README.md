@@ -58,8 +58,14 @@ export ANTHROPIC_API_KEY="your-anthropic-api-key"
 
 ### **Run Inference** (Basic Example)
 ```bash
-# Using YAML configuration
+# Using YAML configuration (results shown immediately as they arrive)
+python cli.py example-prompts.yaml
+
+# Save output to file while showing results
 python cli.py example-prompts.yaml --output results.json
+
+# Wait for all results before displaying (batch mode)
+python cli.py example-prompts.yaml --batch
 
 # Using JSON configuration
 python cli.py example-prompts.json --output results.json
@@ -94,11 +100,17 @@ python cli.py example-prompts.yaml --validate-models
 
 ### **Print Results to Console**
 ```bash
-# Print all results (clean output format)
-python cli.py example-prompts.yaml --print
+# Results are shown immediately as they arrive (default behavior)
+python cli.py example-prompts.yaml
+
+# Wait for all results before displaying
+python cli.py example-prompts.yaml --batch
 
 # Print specific prompt results
 python cli.py example-prompts.yaml --print summary critique
+
+# Hide terminal output (only save to file)
+python cli.py example-prompts.yaml --output results.json --silent
 ```
 
 ### **Debug Mode**
@@ -222,10 +234,11 @@ prompts:
 - **Model and Parameter Validation** ensures that the selected model supports the requested parameters.
 - **Different providers** can be used for different prompts in the same workflow.
 - **Output Format Control**:
-  - Standard mode shows simple success/failure status
-  - Print mode displays complete results
+  - Default mode shows results immediately as they arrive from LLMs
+  - Batch mode waits for all prompts to complete before displaying results
+  - Print mode displays complete results with optional prompt display
   - Debug mode reveals configuration details and logs
-  - All output is displayed in the same order as prompts appear in the configuration file
+  - Silent mode suppresses terminal output while still saving to file
 
 ---
 
