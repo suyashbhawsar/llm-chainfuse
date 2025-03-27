@@ -47,10 +47,15 @@ def main():
     openai_group.add_argument("--logprobs", type=int,
                           help="Log probabilities (OpenAI only)")
 
+    # Output control
     parser.add_argument("-o", "--output", type=str,
-                      help="Path to output file")
+                      help="Path to output file (if not provided, results will not be saved to a file)")
+    parser.add_argument("--silent", action="store_true",
+                      help="Hide output in terminal")
     parser.add_argument("--print", nargs="*",
-                      help="Print results to console. Use without arguments to print all results, or specify prompt IDs to print specific results.")
+                      help="Print specific results (specify prompt IDs). If not specified, all results are printed by default.")
+    parser.add_argument("--show-prompts", action="store_true",
+                      help="Show the actual prompts sent to the LLM (with resolved variables)")
 
     # Context files
     parser.add_argument("-c", "--context", nargs="*",
@@ -223,73 +228,106 @@ def main():
             # Pass args to run method to control behavior
             results = llm.run(args.input, args.output, cli_args=args)
 
-            # Handle printing results if requested (CLI approach)
-            if hasattr(args, 'print') and args.print is not None:
-                print("\n=== LLM INFERENCE RESULTS ===\n")
+            # Skip printing if --silent is provided
+            if args.silent:
+                if args.output:
+                    print(f"Results saved to {args.output}")
+                return
 
-                # Create a mapping of prompts for debug info
-                original_prompts = {}
-                if args.debug:
-                    original_prompts = {p.get("id"): p for p in loaded_prompts}
+            # Determine which IDs to print
+            if hasattr(args, 'print') and args.print:
+                ids_to_print = args.print
+            else:
+                ids_to_print = list(results.keys())
 
-                # Determine which IDs to print
-                ids_to_print = args.print if args.print else list(results.keys())
+            print("\n=== LLM INFERENCE RESULTS ===\n")
 
-                # Sort the IDs to match the original order in the YAML/JSON
-                if loaded_prompts:
-                    # Filter ids_to_print to include only those in prompt_ids_ordered
-                    # and maintain the order from the original file
-                    sorted_ids = [pid for pid in prompt_ids_ordered if pid in ids_to_print]
-                    # Add any remaining IDs that might not be in prompt_ids_ordered
-                    sorted_ids.extend([pid for pid in ids_to_print if pid not in prompt_ids_ordered])
-                    ids_to_print = sorted_ids
+            # Create a mapping of prompts for debug info
+            original_prompts = {}
+            if args.debug or args.show_prompts:
+                original_prompts = {p.get("id"): p for p in loaded_prompts}
 
-                # Display results in the correct order
-                for prompt_id in ids_to_print:
-                    if prompt_id in results:
-                        print(f"\n== RESULT: {prompt_id} ==\n")
+            # Sort the IDs to match the original order in the YAML/JSON
+            if loaded_prompts:
+                # Filter ids_to_print to include only those in prompt_ids_ordered
+                # and maintain the order from the original file
+                sorted_ids = [pid for pid in prompt_ids_ordered if pid in ids_to_print]
+                # Add any remaining IDs that might not be in prompt_ids_ordered
+                sorted_ids.extend([pid for pid in ids_to_print if pid not in prompt_ids_ordered])
+                ids_to_print = sorted_ids
 
-                        # Print debug info if enabled
-                        if args.debug and prompt_id in original_prompts:
-                            prompt_config = original_prompts[prompt_id]
-                            if args.verbose:
-                                print("Configuration:")
-                                for key, value in prompt_config.items():
-                                    if key != "prompt" and key != "id":
-                                        print(f"  {key}: {value}")
+            # Display results in the correct order
+            for prompt_id in ids_to_print:
+                if prompt_id in results:
+                    print(f"\n== RESULT: {prompt_id} ==\n")
+
+                    # Print prompt if requested
+                    if args.show_prompts and prompt_id in original_prompts:
+                        prompt_config = original_prompts[prompt_id]
+                        prompt_text = prompt_config.get("prompt", "")
+
+                        # If this is a dependent prompt (with variables), show the resolved version
+                        if "{{" in prompt_text and prompt_id in llm.resolved_prompts:
+                            print("Original Prompt:")
+                            print(prompt_text)
+                            print("\nResolved Prompt:")
+                            print(llm.resolved_prompts[prompt_id])
+                        else:
+                            print("Prompt:")
+                            print(prompt_text)
+                        print("\nResponse:")
+
+                    # Print debug info if enabled
+                    if args.debug and prompt_id in original_prompts:
+                        prompt_config = original_prompts[prompt_id]
+                        if args.verbose:
+                            print("Configuration:")
+                            for key, value in prompt_config.items():
+                                if key != "prompt" and key != "id":
+                                    print(f"  {key}: {value}")
+                            if not args.show_prompts:  # Don't duplicate prompt if already shown
                                 print("\nPrompt:")
                                 print(prompt_config.get("prompt", ""))
-                                print("\nResult:")
-                            else:
-                                print("Configuration:", end=" ")
-                                config_str = ", ".join(f"{k}={v}" for k, v in prompt_config.items()
-                                                     if k != "prompt" and k != "id")
-                                print(config_str)
-                                print("\nResult:")
+                            print("\nResult:")
+                        else:
+                            print("Configuration:", end=" ")
+                            config_str = ", ".join(f"{k}={v}" for k, v in prompt_config.items()
+                                                 if k != "prompt" and k != "id")
+                            print(config_str)
+                            print("\nResult:")
 
-                        print(results[prompt_id])
-                        print("\n" + "="*50 + "\n")
-                    else:
-                        print(f"Warning: No result found for prompt ID '{prompt_id}'")
+                    print(results[prompt_id])
+                    print("\n" + "="*50 + "\n")
+                else:
+                    print(f"Warning: No result found for prompt ID '{prompt_id}'")
         except Exception as e:
             print(f"Error running inference: {e}")
     elif in_direct_prompt_mode:
         # Direct prompt mode
         try:
-            # Print the prompt if debug is enabled
-            if args.debug:
-                print("\n=== DIRECT PROMPT ===\n")
-                print(direct_prompt_text)
-                print("\n=== RESPONSE ===\n")
+            # Skip printing if --silent is provided
+            if not args.silent:
+                # Print the prompt if debug or show_prompts is enabled
+                if args.debug or args.show_prompts:
+                    print("\n=== DIRECT PROMPT ===\n")
+                    print(direct_prompt_text)
+                    print("\n=== RESPONSE ===\n")
 
             # Call the LLM directly with the provided prompt
             result = llm.call_api(direct_prompt_text)
 
-            # Print the result
-            if result:
-                print(result)
-            else:
-                print("Error: No response received from the model.")
+            # Print the result if not in silent mode
+            if not args.silent:
+                if result:
+                    print(result)
+                else:
+                    print("Error: No response received from the model.")
+
+            # Save to file if requested
+            if args.output and result:
+                with open(args.output, 'w', encoding='utf-8') as f:
+                    f.write(result)
+                print(f"\nResult saved to {args.output}")
         except Exception as e:
             print(f"Error running inference: {e}")
     else:

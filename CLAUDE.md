@@ -2,28 +2,63 @@
 
 ## Build & Run Commands
 - **Core Installation**: `pip install -r requirements.txt`
-- **Basic Run**: `python cli.py example-prompts.yaml --output results.json` (shows only successes/failures)
-- **Print Results**: `python cli.py example-prompts.yaml --print` (all) or `python cli.py example-prompts.yaml --print summary critique` (specific)
-- **Debug Mode**: `python cli.py example-prompts.yaml --print --debug` (shows configs and more info about LLM results)
-- **Verbose Debug**: `python cli.py example-prompts.yaml --print --debug -v` (displays full prompts and detailed configs)
+- **Basic Run**: `python cli.py example-prompts.yaml` (prints all results to terminal)
+- **Save Output to File**: `python cli.py example-prompts.yaml -o results.json` (prints results and saves to file)
+- **Hide Terminal Output**: `python cli.py example-prompts.yaml -o results.json --silent` (only saves to file)
+- **Print Specific Results**: `python cli.py example-prompts.yaml --print summary critique` (only prints specified prompts)
+- **Show Prompts**: `python cli.py example-prompts.yaml --show-prompts` (shows original and resolved prompts with results)
+- **Debug Mode**: `python cli.py example-prompts.yaml --debug` (shows configs and more info about LLM results)
+- **Verbose Debug**: `python cli.py example-prompts.yaml --debug -v` (displays full prompts and detailed configs)
 - **Model Listing**: `python cli.py --provider openai --list-models`
 - **Validate Models**: `python cli.py example-prompts.yaml --validate-models`
 - **Use with Context**: `python cli.py example-prompts.yaml --context background:context1.txt examples:context2.txt`
+- **Direct Prompt**: `python cli.py "Explain quantum computing in simple terms"`
 
 ## Output Format
-- **Standard Run**: Shows success/failure status for each prompt ID
-  ```
-  === LLM INFERENCE STATUS ===
-  ✅ Prompt 'intro': Success
-  ✅ Prompt 'summary': Success
-  ...
-  ```
-- **Print Mode**: Shows full results in the order they appear in the YAML/JSON file
+- **Standard Run**: Shows complete results for each prompt
   ```
   === LLM INFERENCE RESULTS ===
+
   == RESULT: intro ==
+
   [Output text...]
+
+  ==================================================
   ```
+
+- **With Show Prompts**: Shows prompts and results
+  ```
+  === LLM INFERENCE RESULTS ===
+
+  == RESULT: intro ==
+
+  Prompt:
+  Explain OOP in simple terms.
+
+  Response:
+  [Output text...]
+
+  ==================================================
+  ```
+
+- **With Resolved Prompts**: Shows original and resolved prompts for dependent prompts
+  ```
+  === LLM INFERENCE RESULTS ===
+
+  == RESULT: summary ==
+
+  Original Prompt:
+  Summarize the following: {{ intro }}
+
+  Resolved Prompt:
+  Summarize the following: Object-Oriented Programming (OOP) is a programming approach...
+
+  Response:
+  [Output text...]
+
+  ==================================================
+  ```
+
 - **Debug Mode**: Shows logging output and adds configuration information to each result
   ```
   Using API key from environment variable: OPENAI_API_KEY

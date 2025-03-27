@@ -50,6 +50,9 @@ class LLMInference:
         # Results storage for prompt chaining
         self.results = {}
 
+        # Store resolved prompts for display
+        self.resolved_prompts = {}
+
         # Context data storage
         self.contexts = {}
 
@@ -144,12 +147,13 @@ class LLMInference:
         # Call the provider's generate method
         return self.provider.generate(prompt, model, **params)
 
-    def resolve_prompt(self, prompt: str) -> str:
+    def resolve_prompt(self, prompt: str, prompt_id: Optional[str] = None) -> str:
         """
         Replace variables in a prompt with previously generated results or loaded context.
 
         Args:
             prompt: Raw prompt with placeholders
+            prompt_id: Optional ID to store the resolved prompt for display
 
         Returns:
             Resolved prompt with placeholders replaced
@@ -163,6 +167,11 @@ class LLMInference:
                 value = ""  # Handle None values by replacing with empty string
             placeholder = f"{{{{ {key} }}}}"  # Example: {{ summary }} or {{ my_context }}
             result = result.replace(placeholder, str(value))
+
+        # Store the resolved prompt if ID is provided
+        if prompt_id and "{{" in prompt:
+            self.resolved_prompts[prompt_id] = result
+
         return result
 
     def process_prompts(self, prompts: List[Dict[str, Any]]) -> Dict[str, str]:
@@ -244,7 +253,7 @@ class LLMInference:
                     prompt_params[k] = v
 
             # Resolve the prompt text
-            resolved_prompt = self.resolve_prompt(p["prompt"])
+            resolved_prompt = self.resolve_prompt(p["prompt"], p["id"])
 
             try:
                 # Initialize the correct provider
@@ -320,11 +329,14 @@ class LLMInference:
         # Process the prompts
         results = self.process_prompts(prompts)
 
-        # Determine if CLI print mode is active
+        # Determine CLI modes
         cli_print_mode = cli_args and hasattr(cli_args, 'print') and cli_args.print is not None
+        cli_silent_mode = cli_args and hasattr(cli_args, 'silent') and cli_args.silent
+        cli_output_file = cli_args and hasattr(cli_args, 'output') and cli_args.output
 
-        # If print_config exists in YAML and we're not using CLI print mode, show results
-        if print_config and not cli_print_mode:
+        # If print_config exists in YAML and we're not in silent mode
+        # and we don't have CLI print args, use the YAML print config
+        if print_config and not cli_silent_mode and not cli_print_mode:
             print("\n=== LLM INFERENCE RESULTS (from YAML/JSON) ===\n")
 
             if print_config.get("print_all", False):
@@ -332,6 +344,21 @@ class LLMInference:
                 for prompt_id in prompt_ids_ordered:
                     if prompt_id in results:
                         print(f"\n== RESULT: {prompt_id} ==\n")
+                        # Show the prompt if show_prompts is enabled
+                        if cli_args and cli_args.show_prompts:
+                            for p in prompts:
+                                if p.get("id") == prompt_id:
+                                    prompt_text = p.get("prompt", "")
+                                    if "{{" in prompt_text and prompt_id in self.resolved_prompts:
+                                        print("Original Prompt:")
+                                        print(prompt_text)
+                                        print("\nResolved Prompt:")
+                                        print(self.resolved_prompts[prompt_id])
+                                    else:
+                                        print("Prompt:")
+                                        print(prompt_text)
+                                    print("\nResponse:")
+                                    break
                         print(results[prompt_id])
                         print("\n" + "="*50 + "\n")
             elif print_config.get("print_ids"):
@@ -339,32 +366,32 @@ class LLMInference:
                 for prompt_id in print_config["print_ids"]:
                     if prompt_id in results:
                         print(f"\n== RESULT: {prompt_id} ==\n")
+                        # Show the prompt if show_prompts is enabled
+                        if cli_args and cli_args.show_prompts:
+                            for p in prompts:
+                                if p.get("id") == prompt_id:
+                                    prompt_text = p.get("prompt", "")
+                                    if "{{" in prompt_text and prompt_id in self.resolved_prompts:
+                                        print("Original Prompt:")
+                                        print(prompt_text)
+                                        print("\nResolved Prompt:")
+                                        print(self.resolved_prompts[prompt_id])
+                                    else:
+                                        print("Prompt:")
+                                        print(prompt_text)
+                                    print("\nResponse:")
+                                    break
                         print(results[prompt_id])
                         print("\n" + "="*50 + "\n")
                     else:
                         print(f"Warning: No result found for prompt ID '{prompt_id}'")
-        elif not cli_print_mode:
-            # In non-print mode, just show completion status for each prompt
-            print("\n=== LLM INFERENCE STATUS ===\n")
-            for prompt_id in prompt_ids_ordered:
-                if prompt_id in results and results[prompt_id]:
-                    print(f"✅ Prompt '{prompt_id}': Success")
-                else:
-                    print(f"❌ Prompt '{prompt_id}': Failed or empty response")
-            print("\nUse --debug flag for more details or --print to see results\n")
 
         # Save results to file if requested
         if output_file:
-            output_path = output_file
-        else:
-            output_path = file_path.replace('.yaml', '_output.json').replace('.json', '_output.json')
-            if output_path == file_path:  # Safeguard against overwriting input file
-                output_path = f"{file_path}_output.json"
+            with open(output_file, 'w', encoding='utf-8') as f:
+                json.dump(results, f, indent=4)
+            logging.info(f"Results saved to {output_file}")
 
-        with open(output_path, 'w', encoding='utf-8') as f:
-            json.dump(results, f, indent=4)
-
-        logging.info(f"Results saved to {output_path}")
         return results
 
     def _extract_print_config(self, file_path: str) -> Optional[Dict[str, Any]]:
