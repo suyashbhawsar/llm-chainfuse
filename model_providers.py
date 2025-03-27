@@ -2,7 +2,7 @@ import os
 import abc
 import json
 import logging
-from typing import Dict, List, Optional, Any, Union
+from typing import Dict, List, Optional, Any, Union, Iterator
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -21,8 +21,31 @@ class ModelProvider(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def generate(self, prompt: str, model: str, **params) -> str:
-        """Generate text from the model given a prompt and parameters"""
+    def generate(self, prompt: str, model: str, stream: bool = False, **params) -> Union[str, Iterator[str]]:
+        """Generate text from the model given a prompt and parameters.
+
+        Args:
+            prompt: The input prompt
+            model: The model to use
+            stream: Whether to stream the response
+            **params: Additional model parameters
+
+        Returns:
+            If stream=False: Complete response as string
+            If stream=True: Iterator yielding response chunks
+        """
+        pass
+
+    @abc.abstractmethod
+    def generate_stream(self, **params) -> Iterator[str]:
+        """Generate text from the model with streaming enabled.
+
+        Args:
+            **params: Model parameters including model name and prompt
+
+        Returns:
+            Iterator yielding response chunks
+        """
         pass
 
     @abc.abstractmethod
@@ -37,27 +60,20 @@ class ModelProvider(abc.ABC):
 
 
 class OpenAIProvider(ModelProvider):
-    """OpenAI-specific model provider implementation"""
+    """OpenAI model provider implementation"""
+
+    def __init__(self):
+        """Initialize instance variables"""
+        self.client = None
+        self.api_key = None
 
     def initialize(self, api_key: Optional[str] = None, **kwargs) -> None:
         """Initialize the OpenAI client"""
         try:
             import openai
-
-            self.api_key = api_key or os.getenv("OPENAI_API_KEY")
-            if not self.api_key:
-                raise ValueError("API key is missing. Set OPENAI_API_KEY as an environment variable or pass it explicitly.")
-
-            # Handle different versions of OpenAI SDK
-            try:
-                # New SDK style (>=1.0.0)
-                self.client = openai.OpenAI(api_key=self.api_key)
-            except AttributeError:
-                # Legacy SDK style
-                openai.api_key = self.api_key
-                self.client = openai
-
-            logging.info("OpenAI provider initialized")
+            self.client = openai.OpenAI(api_key=api_key)
+            self.api_key = api_key
+            logging.info("OpenAI provider initialized successfully")
         except ImportError:
             logging.error("OpenAI package not installed. Install with: pip install openai>=1.0.0")
             raise
@@ -65,28 +81,13 @@ class OpenAIProvider(ModelProvider):
     def list_models(self) -> List[str]:
         """List available models from OpenAI"""
         try:
-            # Check if using new SDK or legacy SDK
-            if hasattr(self.client, 'models') and hasattr(self.client.models, 'list'):
-                # New SDK style
-                models = self.client.models.list()
-                return [model.id for model in models.data]
-            else:
-                # Legacy SDK style
-                models = self.client.Model.list()
-                return [model.id for model in models.data]
+            response = self.client.models.list()
+            return [model.id for model in response.data]
         except Exception as e:
             logging.error(f"Failed to retrieve OpenAI model list: {e}")
-            # Return default list of models if API fails
-            return [
-                "gpt-4o",
-                "gpt-4o-mini",
-                "gpt-4-turbo",
-                "gpt-3.5-turbo",
-                "text-embedding-3-small",
-                "text-embedding-3-large"
-            ]
+            return []
 
-    def generate(self, prompt: str, model: str, **params) -> str:
+    def generate(self, prompt: str, model: str, stream: bool = False, **params) -> Union[str, Iterator[str]]:
         """Generate text using OpenAI models"""
         try:
             # Check if using new SDK or legacy SDK
@@ -95,7 +96,8 @@ class OpenAIProvider(ModelProvider):
                 # Start with minimal parameters
                 api_params = {
                     "model": model,
-                    "messages": [{"role": "user", "content": prompt}]
+                    "messages": [{"role": "user", "content": prompt}],
+                    "stream": stream
                 }
 
                 # Only add parameters that are explicitly provided
@@ -114,138 +116,212 @@ class OpenAIProvider(ModelProvider):
                 if "logprobs" in params:
                     api_params["logprobs"] = params["logprobs"]
 
-                response = self.client.chat.completions.create(**api_params)
-                return response.choices[0].message.content.strip()
+                if stream:
+                    return self.generate_stream(**api_params)
+                else:
+                    response = self.client.chat.completions.create(**api_params)
+                    return response.choices[0].message.content.strip()
             else:
                 # Legacy SDK style
-                # Start with minimal parameters
                 api_params = {
                     "model": model,
-                    "messages": [{"role": "user", "content": prompt}]
+                    "prompt": prompt,
+                    "stream": stream
                 }
 
-                # Only add parameters that are explicitly provided
-                if "temperature" in params:
-                    api_params["temperature"] = params["temperature"]
-                if "max_tokens" in params:
-                    api_params["max_tokens"] = params["max_tokens"]
-                if "top_p" in params:
-                    api_params["top_p"] = params["top_p"]
-                if "seed" in params:
-                    api_params["seed"] = params["seed"]
-                if "frequency_penalty" in params:
-                    api_params["frequency_penalty"] = params["frequency_penalty"]
-                if "presence_penalty" in params:
-                    api_params["presence_penalty"] = params["presence_penalty"]
-                if "logprobs" in params:
-                    api_params["logprobs"] = params["logprobs"]
+                # Add parameters that are explicitly provided
+                for param in ["temperature", "max_tokens", "top_p", "frequency_penalty", "presence_penalty"]:
+                    if param in params:
+                        api_params[param] = params[param]
 
-                response = self.client.ChatCompletion.create(**api_params)
-                return response.choices[0].message.content.strip()
+                if stream:
+                    return self.generate_stream(**api_params)
+                else:
+                    response = self.client.completions.create(**api_params)
+                    return response.choices[0].text.strip()
+
         except Exception as e:
             logging.error(f"OpenAI API call failed: {e}")
             return None
 
+    def generate_stream(self, **params) -> Iterator[str]:
+        """Generate text using OpenAI models with streaming enabled"""
+        try:
+            # Check if using new SDK or legacy SDK
+            if hasattr(self.client, 'chat') and hasattr(self.client.chat, 'completions'):
+                # New SDK style
+                stream = self.client.chat.completions.create(**params)
+                for chunk in stream:
+                    if chunk.choices[0].delta.content is not None:
+                        yield chunk.choices[0].delta.content
+            else:
+                # Legacy SDK style
+                stream = self.client.completions.create(**params)
+                for chunk in stream:
+                    if chunk.choices[0].text:
+                        yield chunk.choices[0].text
+
+        except Exception as e:
+            logging.error(f"OpenAI streaming API call failed: {e}")
+            yield None
+
     def get_default_params(self) -> Dict[str, Any]:
         """Return default parameters for OpenAI models"""
-        # Return empty dictionary as we're only using explicitly provided parameters
-        return {}
+        return {
+            "temperature": 0.7,
+            "max_tokens": 1000,
+            "top_p": 1.0
+        }
 
     def validate_model(self, model_name: str, params: Dict[str, Any]) -> List[str]:
-        """Validate OpenAI model and parameters"""
-        available_models = self.list_models()
+        """Validate if a model name and parameters are compatible with OpenAI"""
         issues = []
+        try:
+            # Check if model exists
+            response = self.client.models.retrieve(model_name)
+            if not response:
+                issues.append(f"Model '{model_name}' not found in OpenAI's model list")
+        except Exception as e:
+            issues.append(f"Error validating model '{model_name}': {e}")
 
-        if not available_models:
-            issues.append("Unable to fetch the latest model list. Skipping validation.")
-            return issues
-
-        if model_name not in available_models:
-            issues.append(f"Model '{model_name}' is not a valid OpenAI model.")
-
-        # Check if parameters are supported based on model family
-        if model_name.startswith("gpt-4") and params.get("seed") is not None:
-            issues.append(f"Model '{model_name}' does not support: seed")
-
-        if model_name.startswith("gpt-3") and params.get("top_p") is not None:
-            issues.append(f"Model '{model_name}' does not support: top_p")
+        # Validate parameters
+        if "temperature" in params and not 0 <= params["temperature"] <= 2:
+            issues.append("Temperature must be between 0 and 2")
+        if "max_tokens" in params and params["max_tokens"] < 1:
+            issues.append("max_tokens must be positive")
+        if "top_p" in params and not 0 <= params["top_p"] <= 1:
+            issues.append("top_p must be between 0 and 1")
+        if "frequency_penalty" in params and not -2 <= params["frequency_penalty"] <= 2:
+            issues.append("frequency_penalty must be between -2 and 2")
+        if "presence_penalty" in params and not -2 <= params["presence_penalty"] <= 2:
+            issues.append("presence_penalty must be between -2 and 2")
 
         return issues
 
 
 class AnthropicProvider(ModelProvider):
-    """Anthropic Claude model provider implementation"""
+    """Anthropic model provider implementation"""
+
+    def __init__(self):
+        """Initialize instance variables"""
+        self.client = None
+        self.api_key = None
+        # Anthropic-specific default max_tokens
+        self.default_max_tokens = 4096
 
     def initialize(self, api_key: Optional[str] = None, **kwargs) -> None:
         """Initialize the Anthropic client"""
         try:
             import anthropic
-
-            self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
-            if not self.api_key:
-                raise ValueError("API key is missing. Set ANTHROPIC_API_KEY as an environment variable or pass it explicitly.")
-
-            self.client = anthropic.Anthropic(api_key=self.api_key)
-            logging.info("Anthropic provider initialized")
+            self.client = anthropic.Anthropic(api_key=api_key)
+            self.api_key = api_key
+            logging.info("Anthropic provider initialized successfully")
         except ImportError:
             logging.error("Anthropic package not installed. Install with: pip install anthropic")
             raise
 
     def list_models(self) -> List[str]:
-        """List available Anthropic models"""
-        # Anthropic doesn't have a list models endpoint, so we hardcode the available models
-        return [
-            "claude-3-opus-20240229",
-            "claude-3-sonnet-20240229",
-            "claude-3-haiku-20240307",
-            "claude-3.5-sonnet-20240627",
-            # Add latest models as they become available
-        ]
-
-    def generate(self, prompt: str, model: str, **params) -> str:
-        """Generate text using Anthropic Claude models"""
+        """List available models from Anthropic"""
         try:
-            # Create minimal parameters
+            response = self.client.models.list()
+            return [model.id for model in response.data]
+        except Exception as e:
+            logging.error(f"Failed to retrieve Anthropic model list: {e}")
+            return []
+
+    def generate(self, prompt: str, model: str, stream: bool = False, **params) -> Union[str, Iterator[str]]:
+        """Generate text using Anthropic models"""
+        try:
+            # Start with minimal parameters
             api_params = {
                 "model": model,
-                "messages": [{"role": "user", "content": prompt}]
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": params.get("max_tokens", self.default_max_tokens),  # Anthropic-specific default
+                "stream": stream
             }
 
-            # Only add parameters that are explicitly provided and supported by Anthropic
+            # Only add parameters that are explicitly provided
             if "temperature" in params:
                 api_params["temperature"] = params["temperature"]
-            if "max_tokens" in params:
-                api_params["max_tokens"] = params["max_tokens"]
             if "top_p" in params:
                 api_params["top_p"] = params["top_p"]
+            if "top_k" in params:
+                api_params["top_k"] = params["top_k"]
 
-            response = self.client.messages.create(**api_params)
-            return response.content[0].text
+            if stream:
+                return self.generate_stream(**api_params)
+            else:
+                response = self.client.messages.create(**api_params)
+                return response.content[0].text.strip()
+
         except Exception as e:
             logging.error(f"Anthropic API call failed: {e}")
             return None
 
+    def generate_stream(self, **params) -> Iterator[str]:
+        """Generate text using Anthropic models with streaming enabled"""
+        try:
+            # Ensure required parameters are present (Anthropic-specific)
+            if "max_tokens" not in params:
+                params["max_tokens"] = self.default_max_tokens
+            if "messages" not in params:
+                raise ValueError("messages parameter is required for streaming")
+            if "model" not in params:
+                raise ValueError("model parameter is required for streaming")
+
+            stream = self.client.messages.create(**params)
+            for chunk in stream:
+                # Handle different event types in Anthropic's streaming API
+                if hasattr(chunk, 'type'):
+                    if chunk.type == 'content_block_delta':
+                        yield chunk.delta.text
+                    elif chunk.type == 'message_delta':
+                        if hasattr(chunk.delta, 'text'):
+                            yield chunk.delta.text
+                    elif chunk.type == 'content_block_start':
+                        continue
+                    elif chunk.type == 'content_block_stop':
+                        continue
+                    elif chunk.type == 'message_start':
+                        continue
+                    elif chunk.type == 'message_stop':
+                        continue
+                # Fallback for older API versions
+                elif hasattr(chunk, 'delta') and hasattr(chunk.delta, 'text'):
+                    yield chunk.delta.text
+
+        except Exception as e:
+            logging.error(f"Anthropic streaming API call failed: {e}")
+            yield None
+
     def get_default_params(self) -> Dict[str, Any]:
         """Return default parameters for Anthropic models"""
-        # Return empty dictionary as we're only using explicitly provided parameters
-        return {}
+        return {
+            "temperature": 0.7,
+            "max_tokens": self.default_max_tokens,  # Anthropic-specific default
+            "top_p": 1.0
+        }
 
     def validate_model(self, model_name: str, params: Dict[str, Any]) -> List[str]:
-        """Validate Anthropic model and parameters"""
-        available_models = self.list_models()
+        """Validate if a model name and parameters are compatible with Anthropic"""
         issues = []
+        try:
+            # Check if model exists
+            response = self.client.models.retrieve(model_name)
+            if not response:
+                issues.append(f"Model '{model_name}' not found in Anthropic's model list")
+        except Exception as e:
+            issues.append(f"Error validating model '{model_name}': {e}")
 
-        if model_name not in available_models:
-            issues.append(f"Model '{model_name}' is not a valid Anthropic model.")
-
-        # Identify unsupported parameters that have non-default values
-        unsupported_params = []
-        for param in params:
-            if param not in ["temperature", "max_tokens", "top_p"] and params.get(param) is not None:
-                unsupported_params.append(param)
-
-        if unsupported_params:
-            issues.append(f"Claude models do not support: {', '.join(unsupported_params)}")
+        # Validate parameters
+        if "temperature" in params and not 0 <= params["temperature"] <= 1:
+            issues.append("Temperature must be between 0 and 1")
+        if "max_tokens" in params and params["max_tokens"] < 1:
+            issues.append("max_tokens must be positive")
+        if "top_p" in params and not 0 <= params["top_p"] <= 1:
+            issues.append("top_p must be between 0 and 1")
+        if "top_k" in params and params["top_k"] < 1:
+            issues.append("top_k must be positive")
 
         return issues
 
@@ -295,13 +371,14 @@ class OllamaProvider(ModelProvider):
             logging.error(f"Failed to connect to Ollama: {e}")
             return []
 
-    def generate(self, prompt: str, model: str, **params) -> str:
+    def generate(self, prompt: str, model: str, stream: bool = False, **params) -> Union[str, Iterator[str]]:
         """Generate text using Ollama models"""
         try:
             # Create minimal parameters for both API endpoints
             payload = {
                 "model": model,
                 "prompt": prompt,
+                "stream": stream
             }
 
             chat_payload = {
@@ -309,6 +386,7 @@ class OllamaProvider(ModelProvider):
                 "messages": [
                     {"role": "user", "content": prompt}
                 ],
+                "stream": stream
             }
 
             # Only add parameters that are explicitly provided
@@ -322,72 +400,114 @@ class OllamaProvider(ModelProvider):
                 payload["top_p"] = params["top_p"]
                 chat_payload["top_p"] = params["top_p"]
 
-            try:
-                # First try the chat endpoint (newer Ollama versions)
-                response = self.session.post(f"{self.base_url}/api/chat", json=chat_payload, timeout=60)
-                if response.status_code == 200:
-                    return response.json().get("message", {}).get("content", "").strip()
-            except Exception as e:
-                logging.warning(f"Ollama chat API failed, falling back to generate API: {e}")
-
-            # Fall back to the generate endpoint (older Ollama versions)
-            response = self.session.post(f"{self.base_url}/api/generate", json=payload, timeout=60)
-            if response.status_code == 200:
-                # Read the entire response as a string
-                response_text = response.text
-
-                # Split the response by newlines to handle Ollama's streaming format
-                # Ollama returns each chunk as a separate JSON object, one per line
-                lines = response_text.strip().split("\n")
-
-                # Extract and concatenate all response chunks
-                full_response = ""
-                for line in lines:
-                    try:
-                        chunk = json.loads(line)
-                        if "response" in chunk:
-                            full_response += chunk["response"]
-                    except json.JSONDecodeError:
-                        continue
-
-                return full_response.strip()
+            if stream:
+                return self.generate_stream(**chat_payload)
             else:
-                logging.error(f"Ollama API call failed with status {response.status_code}: {response.text}")
-                return None
+                try:
+                    # First try the chat endpoint (newer Ollama versions)
+                    response = self.session.post(f"{self.base_url}/api/chat", json=chat_payload, timeout=60)
+                    if response.status_code == 200:
+                        return response.json().get("message", {}).get("content", "").strip()
+                except Exception as e:
+                    logging.warning(f"Ollama chat API failed, falling back to generate API: {e}")
+
+                # Fall back to the generate endpoint (older Ollama versions)
+                response = self.session.post(f"{self.base_url}/api/generate", json=payload, timeout=60)
+                if response.status_code == 200:
+                    # Read the entire response as a string
+                    response_text = response.text
+
+                    # Split the response by newlines to handle Ollama's streaming format
+                    # Ollama returns each chunk as a separate JSON object, one per line
+                    lines = response_text.strip().split("\n")
+
+                    # Extract and concatenate all response chunks
+                    full_response = ""
+                    for line in lines:
+                        try:
+                            chunk = json.loads(line)
+                            if "response" in chunk:
+                                full_response += chunk["response"]
+                        except json.JSONDecodeError:
+                            continue
+
+                    return full_response.strip()
+                else:
+                    logging.error(f"Ollama API call failed with status {response.status_code}: {response.text}")
+                    return None
+
         except Exception as e:
             logging.error(f"Ollama API call failed: {e}")
             return None
 
+    def generate_stream(self, **params) -> Iterator[str]:
+        """Generate text using Ollama models with streaming enabled"""
+        try:
+            # Try the chat endpoint first (newer Ollama versions)
+            try:
+                response = self.session.post(f"{self.base_url}/api/chat", json=params, stream=True, timeout=60)
+                if response.status_code == 200:
+                    for line in response.iter_lines():
+                        if line:
+                            try:
+                                chunk = json.loads(line)
+                                if "message" in chunk and "content" in chunk["message"]:
+                                    yield chunk["message"]["content"]
+                            except json.JSONDecodeError:
+                                continue
+                    return
+            except Exception as e:
+                logging.warning(f"Ollama chat API failed, falling back to generate API: {e}")
+
+            # Fall back to the generate endpoint (older Ollama versions)
+            response = self.session.post(f"{self.base_url}/api/generate", json=params, stream=True, timeout=60)
+            if response.status_code == 200:
+                for line in response.iter_lines():
+                    if line:
+                        try:
+                            chunk = json.loads(line)
+                            if "response" in chunk:
+                                yield chunk["response"]
+                        except json.JSONDecodeError:
+                            continue
+            else:
+                logging.error(f"Ollama streaming API call failed with status {response.status_code}: {response.text}")
+                yield None
+
+        except Exception as e:
+            logging.error(f"Ollama streaming API call failed: {e}")
+            yield None
+
     def get_default_params(self) -> Dict[str, Any]:
         """Return default parameters for Ollama models"""
-        # Return empty dictionary as we're only using explicitly provided parameters
-        return {}
+        return {
+            "temperature": 0.7,
+            "max_tokens": 1000,
+            "top_p": 1.0
+        }
 
     def validate_model(self, model_name: str, params: Dict[str, Any]) -> List[str]:
-        """Validate Ollama model and parameters"""
-        available_models = self.list_models()
+        """Validate if a model name and parameters are compatible with Ollama"""
         issues = []
+        try:
+            # Check if model exists
+            response = self.session.get(f"{self.base_url}/api/tags")
+            if response.status_code == 200:
+                available_models = [model["name"] for model in response.json().get("models", [])]
+                if model_name not in available_models:
+                    issues.append(f"Model '{model_name}' not found in Ollama's model list")
+            else:
+                issues.append("Failed to retrieve Ollama model list")
+        except Exception as e:
+            issues.append(f"Error validating model '{model_name}': {e}")
 
-        if not available_models:
-            issues.append("Unable to connect to Ollama. Make sure it's running.")
-            return issues
-
-        if model_name not in available_models:
-            issues.append(f"Model '{model_name}' is not available in Ollama.")
-
-        # Ollama doesn't support these parameters
-        unsupported_params = []
-        if params.get("seed") is not None:
-            unsupported_params.append("seed")
-        if params.get("frequency_penalty") is not None:
-            unsupported_params.append("frequency_penalty")
-        if params.get("presence_penalty") is not None:
-            unsupported_params.append("presence_penalty")
-        if params.get("logprobs") is not None:
-            unsupported_params.append("logprobs")
-
-        if unsupported_params:
-            issues.append(f"Ollama models do not support: {', '.join(unsupported_params)}")
+        # Validate parameters
+        if "temperature" in params and not 0 <= params["temperature"] <= 1:
+            issues.append("Temperature must be between 0 and 1")
+        if "max_tokens" in params and params["max_tokens"] < 1:
+            issues.append("max_tokens must be positive")
+        if "top_p" in params and not 0 <= params["top_p"] <= 1:
+            issues.append("top_p must be between 0 and 1")
 
         return issues
 

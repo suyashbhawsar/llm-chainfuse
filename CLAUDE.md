@@ -14,6 +14,7 @@
 - **Validate Models**: `python cli.py example-prompts.yaml --validate-models`
 - **Use with Context**: `python cli.py example-prompts.yaml --context background:context1.txt examples:context2.txt`
 - **Direct Prompt**: `python cli.py "Explain quantum computing in simple terms"`
+- **Streaming Output**: `python cli.py -p openai -m gpt-4o --stream "Tell me a story"` (shows response as it's generated, direct prompts only)
 
 ## Output Format
 - **Default Mode**: Shows results immediately as they arrive from LLMs
@@ -31,6 +32,15 @@
   [Output text...]
 
   ==================================================
+  ```
+
+- **Streaming Mode**: Shows response tokens as they are generated (direct prompts only)
+  ```
+  === LLM INFERENCE RESULTS ===
+
+  == RESULT: direct_prompt ==
+
+  Once upon a time, in a distant galaxy, there was a small robot who loved to tell stories...
   ```
 
 - **Batch Mode**: Shows all results after all prompts complete

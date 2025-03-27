@@ -36,6 +36,8 @@ def main():
                       help="Maximum tokens to generate")
     parser.add_argument("--top_p", type=float,
                       help="Top-p sampling (0.0-1.0)")
+    parser.add_argument("--stream", action="store_true",
+                      help="Enable streaming output")
     # Optional OpenAI-specific parameters
     openai_group = parser.add_argument_group("OpenAI-specific Parameters")
     openai_group.add_argument("-s", "--seed", type=int,
@@ -46,6 +48,11 @@ def main():
                            help="Presence penalty (OpenAI only)")
     openai_group.add_argument("--logprobs", type=int,
                           help="Log probabilities (OpenAI only)")
+
+    # Optional Anthropic-specific parameters
+    anthropic_group = parser.add_argument_group("Anthropic-specific Parameters")
+    anthropic_group.add_argument("--top_k", type=int,
+                               help="Top-k sampling")
 
     # Output control
     parser.add_argument("-o", "--output", type=str,
@@ -316,12 +323,15 @@ def main():
                     print("\n=== RESPONSE ===\n")
 
             # Call the LLM directly with the provided prompt
-            # For direct prompts, the --stream flag doesn't change behavior
-            # since there's only one prompt being processed
-            result = llm.call_api(direct_prompt_text)
-
-            # Print the result if not in silent mode
-            if not args.silent:
+            if args.stream:
+                # Handle streaming output
+                for chunk in llm.call_api(direct_prompt_text, stream=True):
+                    if chunk:
+                        print(chunk, end="", flush=True)
+                print()  # Add newline after streaming
+            else:
+                # Handle non-streaming output
+                result = llm.call_api(direct_prompt_text)
                 if result:
                     print(result)
                 else:

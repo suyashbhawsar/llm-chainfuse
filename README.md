@@ -10,6 +10,7 @@ This project provides a **flexible and developer-friendly** framework to interac
 - **Reproducibility with Seed** 🔄 – Ensure deterministic outputs.
 - **CLI and Python API Support** 🖥️ – Use as a command-line tool or import as a library.
 - **Model Validation & Listing** 📜 – Fetch available models and verify parameter compatibility.
+- **Token Streaming** ⚡ – Get responses as they are generated, token by token.
 
 ---
 
@@ -30,6 +31,7 @@ This project provides a **flexible and developer-friendly** framework to interac
 | **Mixed Provider Workflows** | Chain prompts across different providers in the same workflow. |
 | **Context Files** | Include external text files as context in your prompts. |
 | **Model Listing & Validation** | Fetch available models and verify parameter compatibility. |
+| **Token Streaming** | Get responses as they are generated, token by token, for real-time output. |
 
 ---
 
@@ -79,6 +81,18 @@ python cli.py example-prompts.yaml --provider anthropic
 ### **Override Defaults from CLI**
 ```bash
 python cli.py example-prompts.yaml --temperature 0.9 --max_tokens 500 --model gpt-4o --output results.json
+```
+
+### **Streaming Support**
+```bash
+# Stream direct prompt response (streaming only works with direct prompts)
+python cli.py -p openai -m gpt-4o --stream "Tell me a story"
+
+# Stream with specific provider
+python cli.py -p anthropic -m claude-3-sonnet-20240229 --stream "Explain quantum computing"
+
+# Stream with Ollama
+python cli.py -p ollama -m llama3.2:latest --stream "What is machine learning?"
 ```
 
 ### **List Available Models**
@@ -233,8 +247,10 @@ prompts:
 - **Dependent prompts run sequentially**, replacing `{{ variable_name }}` placeholders with previous outputs.
 - **Model and Parameter Validation** ensures that the selected model supports the requested parameters.
 - **Different providers** can be used for different prompts in the same workflow.
+- **Token Streaming** provides real-time output as the model generates responses (direct prompts only).
 - **Output Format Control**:
   - Default mode shows results immediately as they arrive from LLMs
+  - Streaming mode shows response tokens as they are generated (direct prompts only)
   - Batch mode waits for all prompts to complete before displaying results
   - Print mode displays complete results with optional prompt display
   - Debug mode reveals configuration details and logs
@@ -398,8 +414,8 @@ print:
 }
 ```
 
-### **5️⃣ Streaming Support** (Coming Soon)
-- Enable real-time streaming output from API responses.
+### **5️⃣ Streaming Support**
+- Enable real-time streaming output from API responses (direct prompts only).
 
 ### **6️⃣ Token Usage Logging** (Future Enhancement)
 - Track API token consumption per request.

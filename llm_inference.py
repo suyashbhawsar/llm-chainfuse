@@ -5,7 +5,7 @@ import sys
 import logging
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Dict, List, Optional, Any, Union, Callable
+from typing import Dict, List, Optional, Any, Union, Callable, Iterator
 from model_providers import get_provider
 
 # Configure logging
@@ -126,16 +126,18 @@ class LLMInference:
 
         logging.info("Model validation completed.")
 
-    def call_api(self, prompt: str, **kwargs) -> Optional[str]:
+    def call_api(self, prompt: str, stream: bool = False, **kwargs) -> Union[str, Iterator[str]]:
         """
         Make an API call to the provider with optional parameter overrides.
 
         Args:
             prompt: The text prompt to send
+            stream: Whether to stream the response
             **kwargs: Override parameters for this specific call
 
         Returns:
-            Generated text or None if an error occurred
+            If stream=False: Generated text or None if an error occurred
+            If stream=True: Iterator yielding response chunks
         """
         # Determine which model to use
         model = kwargs.pop("model", self.default_model)
@@ -145,7 +147,7 @@ class LLMInference:
         params.update({k: v for k, v in kwargs.items() if v is not None})
 
         # Call the provider's generate method
-        return self.provider.generate(prompt, model, **params)
+        return self.provider.generate(prompt, model, stream=stream, **params)
 
     def resolve_prompt(self, prompt: str, prompt_id: Optional[str] = None) -> str:
         """
