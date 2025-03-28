@@ -208,6 +208,51 @@ personal_summary: 2.61 seconds
 python cli.py example-prompts.yaml --context background:context1.txt examples:context2.txt
 ```
 
+You can also include YAML files as context, which supports nested path resolution using dot notation:
+
+```bash
+python cli.py example-prompts.yaml --context catalog:data/product_catalog.yaml
+```
+
+Example YAML context file (`data/product_catalog.yaml`):
+```yaml
+products:
+  electronics:
+    laptops:
+      - name: "MacBook Pro"
+        price: 1299.99
+        specs:
+          processor: "M2"
+          memory: "16GB"
+      - name: "ThinkPad X1"
+        price: 1499.99
+        specs:
+          processor: "Intel i7"
+          memory: "32GB"
+    phones:
+      - name: "iPhone 15"
+        price: 999.99
+        specs:
+          storage: "256GB"
+          color: "Space Gray"
+  accessories:
+    headphones:
+      - name: "AirPods Pro"
+        price: 249.99
+        specs:
+          type: "Wireless"
+          battery: "24h"
+```
+
+In your prompts, you can access nested values using dot notation:
+```yaml
+prompts:
+  - id: "product_description"
+    prompt: "Create a marketing description for the {{ catalog.products.electronics.laptops.0.name }} with {{ catalog.products.electronics.laptops.0.specs.processor }} processor."
+```
+
+The system will automatically resolve the nested paths and replace the placeholders with the corresponding values.
+
 ---
 
 ## 📝 Prompt Configuration

@@ -7,9 +7,10 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Optional, Any, Union, Callable, Iterator
 from model_providers import get_provider
+import re
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
 
 
 class LLMInference:
@@ -56,6 +57,34 @@ class LLMInference:
         # Context data storage
         self.contexts = {}
 
+    def get_nested_value(self, d: Dict, path: str) -> Any:
+        """
+        Get a value from a nested dictionary using a dot-separated path.
+
+        Args:
+            d: Dictionary to search in
+            path: Dot-separated path to the value (e.g., 'a.b.c')
+
+        Returns:
+            The value at the path, or empty string if not found
+        """
+        keys = [k.strip() for k in path.split('.')]  # Strip whitespace from each key
+        current = d
+        logging.debug(f"Getting nested value for path: {path}")
+
+        for key in keys:
+            if isinstance(current, dict):
+                if key in current:
+                    current = current.get(key)
+                else:
+                    logging.debug(f"Key '{key}' not found in dictionary")
+                    return ''
+            else:
+                logging.debug(f"Current value is not a dictionary")
+                return ''
+
+        return current
+
     def add_contexts(self, context_files: Dict[str, str]) -> None:
         """
         Load and add context data as dynamic variables.
@@ -66,8 +95,20 @@ class LLMInference:
         for context_id, file_path in context_files.items():
             try:
                 with open(file_path, 'r', encoding='utf-8') as f:
-                    self.contexts[context_id] = f.read().strip()
-                logging.info(f"Loaded context for ID '{context_id}' from '{file_path}'.")
+                    content = f.read()
+                    if file_path.endswith(('.yaml', '.yml')):
+                        try:
+                            yaml_data = yaml.safe_load(content)
+                            # Store the entire YAML data structure
+                            self.contexts[context_id] = yaml_data
+                            logging.info(f"Loaded YAML context for ID '{context_id}' from '{file_path}'")
+                        except yaml.YAMLError as e:
+                            logging.error(f"Failed to parse YAML file '{file_path}': {e}")
+                            raise
+                    else:
+                        # For non-YAML files, store as plain text
+                        self.contexts[context_id] = content.strip()
+                        logging.info(f"Loaded text context for ID '{context_id}' from '{file_path}'")
             except Exception as e:
                 logging.error(f"Failed to load context file '{file_path}': {e}")
                 raise
@@ -152,6 +193,7 @@ class LLMInference:
     def resolve_prompt(self, prompt: str, prompt_id: Optional[str] = None) -> str:
         """
         Replace variables in a prompt with previously generated results or loaded context.
+        Supports nested YAML paths using dot notation (e.g., {{ profile.introduction.fullName }}).
 
         Args:
             prompt: Raw prompt with placeholders
@@ -164,11 +206,33 @@ class LLMInference:
             return ""
 
         result = prompt
+        logging.debug(f"Resolving prompt with ID: {prompt_id}")
+
+        # First pass: Handle nested YAML paths
+        for key, value in self.contexts.items():
+            if isinstance(value, dict):
+                # Match the entire placeholder pattern including the context key
+                pattern = r"\{\{\s*" + re.escape(key) + r"\.([^}]+)\s*\}\}"
+                matches = re.finditer(pattern, result)
+                for match in matches:
+                    full_match = match.group(0)
+                    nested_path = match.group(1)
+                    nested_value = self.get_nested_value(value, nested_path)
+                    if nested_value != '':
+                        result = result.replace(full_match, str(nested_value))
+                    else:
+                        logging.warning(f"Could not resolve nested path '{nested_path}' in context '{key}'")
+
+        # Second pass: Handle direct key replacements for backward compatibility
         for key, value in {**self.results, **self.contexts}.items():
             if value is None:
                 value = ""  # Handle None values by replacing with empty string
-            placeholder = f"{{{{ {key} }}}}"  # Example: {{ summary }} or {{ my_context }}
-            result = result.replace(placeholder, str(value))
+            if isinstance(value, (str, int, float, bool)):  # Only replace if value is a simple type
+                spaced_placeholder = f"{{{{ {key} }}}}"
+                unspaced_placeholder = f"{{{{{key}}}}}"
+                if spaced_placeholder in result or unspaced_placeholder in result:
+                    result = result.replace(spaced_placeholder, str(value))
+                    result = result.replace(unspaced_placeholder, str(value))
 
         # Store the resolved prompt if ID is provided
         if prompt_id and "{{" in prompt:
@@ -239,13 +303,17 @@ class LLMInference:
                     if k not in ["prompt", "id", "provider", "model"]:
                         prompt_params[k] = v
 
+                # Resolve the prompt text first
+                resolved_prompt = self.resolve_prompt(p["prompt"], p["id"])
+                logging.debug(f"Resolved prompt for {p['id']}: {resolved_prompt}")
+
                 # Create a function that will process this prompt with the correct provider
-                def process_with_provider(prompt_config, provider_name, model_name, params):
+                def process_with_provider(prompt_config, resolved_text, provider_name, model_name, params):
                     try:
                         start_time = time.time()
                         prompt_provider = get_provider(provider_name)
                         prompt_provider.initialize()
-                        response = prompt_provider.generate(prompt_config["prompt"], model_name, **params)
+                        response = prompt_provider.generate(resolved_text, model_name, **params)
                         end_time = time.time()
                         return prompt_config["id"], response, end_time - start_time
                     except Exception as e:
@@ -256,6 +324,7 @@ class LLMInference:
                 future = executor.submit(
                     process_with_provider,
                     p,
+                    resolved_prompt,
                     provider_name,
                     model_name,
                     prompt_params
@@ -327,6 +396,7 @@ class LLMInference:
 
                     # Resolve the prompt text
                     resolved_prompt = self.resolve_prompt(p["prompt"], p["id"])
+                    logging.debug(f"Resolved prompt for {p['id']}: {resolved_prompt}")
 
                     # Submit the task to the executor
                     def process_resolved_prompt(prompt_id, resolved_text, provider_name, model_name, params):
