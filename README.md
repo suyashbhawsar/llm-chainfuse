@@ -11,6 +11,7 @@ This project provides a **flexible and developer-friendly** framework to interac
 - **CLI and Python API Support** 🖥️ – Use as a command-line tool or import as a library.
 - **Model Validation & Listing** 📜 – Fetch available models and verify parameter compatibility.
 - **Token Streaming** ⚡ – Get responses as they are generated, token by token.
+- **Debug Mode** 🔍 – Comprehensive debugging with timing information and prompt visibility.
 
 ---
 
@@ -26,7 +27,9 @@ This project provides a **flexible and developer-friendly** framework to interac
 | **Frequency & Presence Penalty** | Adjust response diversity and repetition (OpenAI only). |
 | **Seed for Reproducibility** | Ensure consistent responses with the same input (OpenAI only). |
 | **Piped Prompts** | Use `{{ variable_name }}` syntax to reuse earlier outputs. |
-| **Parallel Execution** | Process independent prompts simultaneously. |
+| **Parallel Execution** | Process independent prompts simultaneously with ThreadPoolExecutor. |
+| **Dependency Management** | Automatically detect and resolve prompt dependencies. |
+| **Debug Mode** | Comprehensive debugging with timing information and prompt visibility. |
 | **CLI and Module Support** | Use as a CLI tool or import as a Python library. |
 | **Mixed Provider Workflows** | Chain prompts across different providers in the same workflow. |
 | **Context Files** | Include external text files as context in your prompts. |
@@ -133,13 +136,71 @@ python cli.py example-prompts.yaml --print summary critique
 python cli.py example-prompts.yaml --output results.json --silent
 ```
 
-### **Debug Mode**
+### **Debug Mode Options**
 ```bash
-# Show detailed debug information including configuration and logs
-python cli.py example-prompts.yaml --print --debug
+# Enable debug mode (shows prompts and timing information)
+python cli.py example-prompts.yaml --debug
 
-# Enable more verbose debug output with full prompt text
-python cli.py example-prompts.yaml --print --debug -v
+# Increase verbosity level (0-2)
+python cli.py example-prompts.yaml --debug --verbose 2
+
+# Show prompts in output (enabled by default in debug mode)
+python cli.py example-prompts.yaml --show-prompts
+
+# Show configuration in output
+python cli.py example-prompts.yaml --show-config
+
+# Show request options in output
+python cli.py example-prompts.yaml --show-request-options
+
+# Show response headers in output
+python cli.py example-prompts.yaml --show-response-headers
+
+# Show request ID in output
+python cli.py example-prompts.yaml --show-request-id
+```
+
+### **Parallel Execution Example**
+```yaml
+prompts:
+  # Independent prompts (processed in parallel)
+  person_name:
+    text: "My name is John."
+    model: "gpt-4o"
+    max_tokens: 50
+    provider: "openai"
+
+  person_location:
+    text: "I live in New York."
+    model: "gpt-4o"
+    max_tokens: 50
+    provider: "openai"
+
+  # Dependent prompts (processed after dependencies)
+  personal_summary:
+    text: "Create a summary about {{ person_name }} who lives in {{ person_location }}"
+    model: "gpt-4o"
+    max_tokens: 150
+    provider: "openai"
+```
+
+### **Debug Mode Output Example**
+```
+=== Prompt Processing Times ===
+person_name: 1.37 seconds
+person_location: 1.14 seconds
+personal_summary: 2.61 seconds
+
+=== Dependency Graph ===
+{
+    'personal_summary': ['person_name', 'person_location']
+}
+
+=== Independent Prompts ===
+['person_name', 'person_location']
+
+=== Dependent Prompts ===
+['personal_summary']
 ```
 
 ### **Include Context Files**

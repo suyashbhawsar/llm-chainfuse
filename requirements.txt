@@ -3,6 +3,7 @@ pyyaml
 requests
 typing-extensions
 python-dotenv
+# re module is part of Python standard library
 
 # Provider-specific dependencies (install as needed)
 # OpenAI

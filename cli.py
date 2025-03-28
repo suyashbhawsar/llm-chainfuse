@@ -92,6 +92,10 @@ def main():
         for handler in logging.root.handlers[:]:
             logging.root.removeHandler(handler)
         logging.basicConfig(level=logging.DEBUG, format=log_format)
+        # Enable show_prompts by default in debug mode
+        if not args.show_prompts:
+            args.show_prompts = True
+            logging.info("Debug mode enabled: Showing prompts by default")
     else:
         # In non-debug mode, silence logging output
         for handler in logging.root.handlers[:]:

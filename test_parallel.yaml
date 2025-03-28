@@ -1,0 +1,68 @@
+prompts:
+  # Independent prompts - these will all run in parallel
+  - id: person_name
+    prompt: "My name is Ezio Auditore."
+    model: gpt-4o
+    provider: openai
+    max_tokens: 50
+
+  - id: person_profession
+    prompt: "I am a DevOps Engineer with 5 years of experience."
+    model: gpt-4o
+    provider: openai
+    max_tokens: 50
+
+  - id: person_location
+    prompt: "I live in Florence, Italy."
+    model: gpt-4o
+    provider: openai
+    max_tokens: 50
+
+  - id: person_education
+    prompt: "I studied Computer Science at the University of Florence."
+    model: gpt-4o
+    provider: openai
+    max_tokens: 50
+
+  - id: person_hobby
+    prompt: "In my free time, I enjoy rock climbing and hiking."
+    model: gpt-4o
+    provider: openai
+    max_tokens: 50
+
+  - id: person_skill1
+    prompt: "I'm experienced with Docker, Kubernetes, and CI/CD pipelines."
+    model: gpt-4o
+    provider: openai
+    max_tokens: 50
+
+  - id: person_skill2
+    prompt: "I'm proficient in Python, Terraform, and AWS."
+    model: gpt-4o
+    provider: openai
+    max_tokens: 50
+
+  - id: person_goal
+    prompt: "My goal is to become a Site Reliability Engineer."
+    model: gpt-4o
+    provider: openai
+    max_tokens: 50
+
+  # Dependent prompts - these will run once their dependencies are resolved
+  - id: personal_summary
+    prompt: "Create a brief personal summary based on this information: {{ person_name }} {{ person_profession }} {{ person_location }} {{ person_education }}"
+    model: gpt-4o
+    provider: openai
+    max_tokens: 150
+
+  - id: professional_summary
+    prompt: "Create a professional summary based on this information: {{ person_profession }} {{ person_skill1 }} {{ person_skill2 }} {{ person_goal }}"
+    model: gpt-4o
+    provider: openai
+    max_tokens: 150
+
+  - id: complete_profile
+    prompt: "Create a complete profile combining all available information: {{ personal_summary }} {{ professional_summary }} Also include hobbies: {{ person_hobby }}"
+    model: gpt-4o
+    provider: openai
+    max_tokens: 300

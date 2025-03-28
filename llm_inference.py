@@ -190,12 +190,38 @@ class LLMInference:
             Dictionary of prompt IDs to results
         """
         from model_providers import get_provider
+        import re
+        import time
 
         results = {}
+        timing_info = {}  # Store timing information for each prompt
 
-        # Separate independent and dependent prompts
-        independent_prompts = [p for p in prompts if not any("{{" in p.get("prompt", "") for p in prompts)]
-        dependent_prompts = [p for p in prompts if p not in independent_prompts]
+        # Extract dependency pattern - matches {{ variable_name }}
+        def extract_dependencies(prompt_text):
+            pattern = r"\{\{\s*([^}]+)\s*\}\}"
+            dependencies = re.findall(pattern, prompt_text)
+            return [dep.strip() for dep in dependencies]
+
+        # Build dependency graph and identify independent prompts
+        dependency_graph = {}
+        independent_prompts = []
+        prompt_map = {p["id"]: p for p in prompts}
+
+        for p in prompts:
+            prompt_id = p["id"]
+            prompt_text = p.get("prompt", "")
+            dependencies = extract_dependencies(prompt_text)
+
+            # Filter to only include prompt IDs that exist in our prompt list
+            prompt_dependencies = [dep for dep in dependencies if dep in prompt_map]
+
+            if not prompt_dependencies:
+                independent_prompts.append(p)
+            else:
+                dependency_graph[prompt_id] = prompt_dependencies
+
+        logging.info(f"Independent prompts: {[p['id'] for p in independent_prompts]}")
+        logging.info(f"Dependency graph: {dependency_graph}")
 
         # Process independent prompts in parallel
         with ThreadPoolExecutor() as executor:
@@ -216,12 +242,15 @@ class LLMInference:
                 # Create a function that will process this prompt with the correct provider
                 def process_with_provider(prompt_config, provider_name, model_name, params):
                     try:
+                        start_time = time.time()
                         prompt_provider = get_provider(provider_name)
                         prompt_provider.initialize()
-                        return prompt_config["id"], prompt_provider.generate(prompt_config["prompt"], model_name, **params)
+                        response = prompt_provider.generate(prompt_config["prompt"], model_name, **params)
+                        end_time = time.time()
+                        return prompt_config["id"], response, end_time - start_time
                     except Exception as e:
                         logging.error(f"Error with provider {provider_name}: {e}")
-                        return prompt_config["id"], None
+                        return prompt_config["id"], None, 0
 
                 # Submit the task to the executor
                 future = executor.submit(
@@ -235,12 +264,13 @@ class LLMInference:
 
             # Process results as they come in
             for future in as_completed(future_to_prompt):
-                prompt_id, response = future.result()
+                prompt_id, response, duration = future.result()
                 prompt = future_to_prompt[future]
 
                 if response is not None:
                     self.results[prompt_id] = response
                     results[prompt_id] = response
+                    timing_info[prompt_id] = duration
 
                     # Call streaming callback if provided
                     if stream_callback:
@@ -250,58 +280,109 @@ class LLMInference:
                     # Store empty response to prevent errors in dependent prompts
                     self.results[prompt_id] = ""
                     results[prompt_id] = ""
+                    timing_info[prompt_id] = 0
 
                     # Call streaming callback with empty result if provided
                     if stream_callback:
                         stream_callback(prompt_id, "")
 
-        # Process dependent prompts sequentially
-        for p in dependent_prompts:
-            # Get the provider for this prompt
-            provider_name = p.get("provider", self.provider_name)
-            model_name = p.get("model", self.default_model)
+        # Process dependent prompts as soon as their dependencies are resolved
+        remaining_dependent_prompts = list(dependency_graph.keys())
 
-            # Extract only parameters that are explicitly set in the prompt
-            prompt_params = {}
-            for k, v in p.items():
-                if k not in ["prompt", "id", "provider", "model"]:
-                    prompt_params[k] = v
+        while remaining_dependent_prompts:
+            # Find prompts whose dependencies are all resolved
+            ready_prompts = []
+            for prompt_id in remaining_dependent_prompts:
+                dependencies = dependency_graph[prompt_id]
+                if all(dep in self.results for dep in dependencies):
+                    ready_prompts.append(prompt_id)
 
-            # Resolve the prompt text
-            resolved_prompt = self.resolve_prompt(p["prompt"], p["id"])
-
-            try:
-                # Initialize the correct provider
-                prompt_provider = get_provider(provider_name)
-                prompt_provider.initialize()
-
-                # Generate the response
-                response = prompt_provider.generate(resolved_prompt, model_name, **prompt_params)
-
-                if response is not None:
-                    self.results[p["id"]] = response
-                    results[p["id"]] = response
-
-                    # Call streaming callback if provided
+            if not ready_prompts:
+                # If no prompts are ready but we still have remaining prompts,
+                # there might be a circular dependency or missing prompt
+                logging.error(f"Unable to resolve dependencies for: {remaining_dependent_prompts}")
+                for prompt_id in remaining_dependent_prompts:
+                    self.results[prompt_id] = f"Error: Could not resolve dependencies {dependency_graph[prompt_id]}"
+                    results[prompt_id] = self.results[prompt_id]
+                    timing_info[prompt_id] = 0
                     if stream_callback:
-                        stream_callback(p["id"], response)
-                else:
-                    logging.error(f"Failed to get response for prompt ID: {p['id']}")
-                    # Store empty response to prevent further errors
-                    self.results[p["id"]] = ""
-                    results[p["id"]] = ""
+                        stream_callback(prompt_id, self.results[prompt_id])
+                break
 
-                    # Call streaming callback with empty result if provided
-                    if stream_callback:
-                        stream_callback(p["id"], "")
-            except Exception as e:
-                logging.error(f"Error processing prompt {p['id']} with provider {provider_name}: {e}")
-                self.results[p["id"]] = ""
-                results[p["id"]] = ""
+            # Process all ready prompts in parallel
+            with ThreadPoolExecutor() as executor:
+                future_to_prompt = {}
 
-                # Call streaming callback with empty result if provided
-                if stream_callback:
-                    stream_callback(p["id"], "")
+                for prompt_id in ready_prompts:
+                    p = prompt_map[prompt_id]
+                    # Get the provider for this prompt
+                    provider_name = p.get("provider", self.provider_name)
+                    model_name = p.get("model", self.default_model)
+
+                    # Extract parameters
+                    prompt_params = {}
+                    for k, v in p.items():
+                        if k not in ["prompt", "id", "provider", "model"]:
+                            prompt_params[k] = v
+
+                    # Resolve the prompt text
+                    resolved_prompt = self.resolve_prompt(p["prompt"], p["id"])
+
+                    # Submit the task to the executor
+                    def process_resolved_prompt(prompt_id, resolved_text, provider_name, model_name, params):
+                        try:
+                            start_time = time.time()
+                            prompt_provider = get_provider(provider_name)
+                            prompt_provider.initialize()
+                            response = prompt_provider.generate(resolved_text, model_name, **params)
+                            end_time = time.time()
+                            return prompt_id, response, end_time - start_time
+                        except Exception as e:
+                            logging.error(f"Error with provider {provider_name}: {e}")
+                            return prompt_id, None, 0
+
+                    future = executor.submit(
+                        process_resolved_prompt,
+                        prompt_id,
+                        resolved_prompt,
+                        provider_name,
+                        model_name,
+                        prompt_params
+                    )
+                    future_to_prompt[future] = p
+
+                # Process results as they come in
+                for future in as_completed(future_to_prompt):
+                    prompt_id, response, duration = future.result()
+                    prompt = future_to_prompt[future]
+
+                    if response is not None:
+                        self.results[prompt_id] = response
+                        results[prompt_id] = response
+                        timing_info[prompt_id] = duration
+
+                        # Call streaming callback if provided
+                        if stream_callback:
+                            stream_callback(prompt_id, response)
+                    else:
+                        logging.error(f"Failed to get response for prompt ID: {prompt_id}")
+                        self.results[prompt_id] = ""
+                        results[prompt_id] = ""
+                        timing_info[prompt_id] = 0
+
+                        # Call streaming callback with empty result
+                        if stream_callback:
+                            stream_callback(prompt_id, "")
+
+            # Remove processed prompts from the remaining list
+            for prompt_id in ready_prompts:
+                remaining_dependent_prompts.remove(prompt_id)
+
+        # Log timing information if in debug mode
+        if logging.getLogger().getEffectiveLevel() <= logging.DEBUG:
+            logging.info("\n=== Prompt Processing Times ===")
+            for prompt_id, duration in timing_info.items():
+                logging.info(f"{prompt_id}: {duration:.2f} seconds")
 
         return results
 
