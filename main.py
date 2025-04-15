@@ -65,6 +65,9 @@ def main():
                       help="Show the actual prompts sent to the LLM (with resolved variables)")
     parser.add_argument("--batch", action="store_true",
                       help="Wait for all prompts to complete before displaying results")
+    # New argument for running a specific ID
+    parser.add_argument("--run-id", type=str,
+                      help="Run only the specified prompt ID and its dependencies")
 
     # Context files
     parser.add_argument("-c", "--context", nargs="*",

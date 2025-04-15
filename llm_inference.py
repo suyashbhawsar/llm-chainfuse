@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Optional, Any, Union, Callable, Iterator
 from model_providers import get_provider
 import re
+import time
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -190,6 +191,50 @@ class LLMInference:
         # Call the provider's generate method
         return self.provider.generate(prompt, model, stream=stream, **params)
 
+    def _extract_dependencies(self, prompt_text: str, prompt_map: Dict[str, Dict]) -> List[str]:
+        """
+        Extract prompt IDs mentioned as dependencies in a prompt string.
+
+        Args:
+            prompt_text: The prompt text to parse.
+            prompt_map: A dictionary mapping prompt IDs to their configurations.
+
+        Returns:
+            A list of prompt IDs that are dependencies.
+        """
+        if not prompt_text:
+            return []
+        pattern = r"\{\{\s*([^}]+)\s*\}\}"
+        dependencies = re.findall(pattern, prompt_text)
+        # Filter to only include valid prompt IDs and ignore context variables
+        prompt_dependencies = [dep.strip() for dep in dependencies if dep.strip() in prompt_map]
+        return prompt_dependencies
+
+    def _find_all_dependencies(self, target_id: str, prompts_dict: Dict[str, Dict]) -> set:
+        """
+        Recursively find all prompt IDs required to run the target ID.
+
+        Args:
+            target_id: The final prompt ID to run.
+            prompts_dict: Dictionary mapping prompt IDs to their configurations.
+
+        Returns:
+            A set of all required prompt IDs (including the target_id).
+        """
+        required_ids = {target_id}
+        if target_id not in prompts_dict:
+            raise ValueError(f"Target prompt ID '{target_id}' not found in the input file.")
+
+        prompt_config = prompts_dict[target_id]
+        prompt_text = prompt_config.get("prompt", "")
+        direct_dependencies = self._extract_dependencies(prompt_text, prompts_dict)
+
+        for dep_id in direct_dependencies:
+            if dep_id not in required_ids:  # Avoid infinite loops in case of circular dependencies (though process_prompts handles this)
+                required_ids.update(self._find_all_dependencies(dep_id, prompts_dict))
+
+        return required_ids
+
     def resolve_prompt(self, prompt: str, prompt_id: Optional[str] = None) -> str:
         """
         Replace variables in a prompt with previously generated results or loaded context.
@@ -260,16 +305,16 @@ class LLMInference:
         results = {}
         timing_info = {}  # Store timing information for each prompt
 
+        # Build prompt map for easy lookup
+        prompt_map = {p["id"]: p for p in prompts}
+
         # Extract dependency pattern - matches {{ variable_name }}
         def extract_dependencies(prompt_text):
-            pattern = r"\{\{\s*([^}]+)\s*\}\}"
-            dependencies = re.findall(pattern, prompt_text)
-            return [dep.strip() for dep in dependencies]
+            return self._extract_dependencies(prompt_text, prompt_map)
 
         # Build dependency graph and identify independent prompts
         dependency_graph = {}
         independent_prompts = []
-        prompt_map = {p["id"]: p for p in prompts}
 
         for p in prompts:
             prompt_id = p["id"]
@@ -277,6 +322,7 @@ class LLMInference:
             dependencies = extract_dependencies(prompt_text)
 
             # Filter to only include prompt IDs that exist in our prompt list
+            # We use the filtered 'prompts' list here, not the global prompt_map
             prompt_dependencies = [dep for dep in dependencies if dep in prompt_map]
 
             if not prompt_dependencies:
@@ -284,8 +330,8 @@ class LLMInference:
             else:
                 dependency_graph[prompt_id] = prompt_dependencies
 
-        logging.info(f"Independent prompts: {[p['id'] for p in independent_prompts]}")
-        logging.info(f"Dependency graph: {dependency_graph}")
+        logging.info(f"Independent prompts to run: {[p['id'] for p in independent_prompts]}")
+        logging.info(f"Dependency graph for this run: {dependency_graph}")
 
         # Process independent prompts in parallel
         with ThreadPoolExecutor() as executor:
@@ -311,13 +357,14 @@ class LLMInference:
                 def process_with_provider(prompt_config, resolved_text, provider_name, model_name, params):
                     try:
                         start_time = time.time()
-                        prompt_provider = get_provider(provider_name)
-                        prompt_provider.initialize()
-                        response = prompt_provider.generate(resolved_text, model_name, **params)
+                        # Re-get provider instance within the thread
+                        prompt_provider_instance = get_provider(provider_name)
+                        prompt_provider_instance.initialize() # Ensure initialized in thread
+                        response = prompt_provider_instance.generate(resolved_text, model_name, **params)
                         end_time = time.time()
                         return prompt_config["id"], response, end_time - start_time
                     except Exception as e:
-                        logging.error(f"Error with provider {provider_name}: {e}")
+                        logging.error(f"Error processing prompt '{prompt_config['id']}' with provider {provider_name}: {e}")
                         return prompt_config["id"], None, 0
 
                 # Submit the task to the executor
@@ -402,13 +449,14 @@ class LLMInference:
                     def process_resolved_prompt(prompt_id, resolved_text, provider_name, model_name, params):
                         try:
                             start_time = time.time()
-                            prompt_provider = get_provider(provider_name)
-                            prompt_provider.initialize()
-                            response = prompt_provider.generate(resolved_text, model_name, **params)
+                            # Re-get provider instance within the thread
+                            prompt_provider_instance = get_provider(provider_name)
+                            prompt_provider_instance.initialize() # Ensure initialized in thread
+                            response = prompt_provider_instance.generate(resolved_text, model_name, **params)
                             end_time = time.time()
                             return prompt_id, response, end_time - start_time
                         except Exception as e:
-                            logging.error(f"Error with provider {provider_name}: {e}")
+                            logging.error(f"Error processing prompt '{prompt_id}' with provider {provider_name}: {e}")
                             return prompt_id, None, 0
 
                     future = executor.submit(
@@ -468,9 +516,15 @@ class LLMInference:
         """
         with open(file_path, 'r', encoding='utf-8') as file:
             if file_path.endswith(('.yaml', '.yml')):
-                return yaml.safe_load(file).get("prompts", [])
+                data = yaml.safe_load(file)
+                if not isinstance(data, dict) or "prompts" not in data:
+                    raise ValueError("YAML file must contain a top-level 'prompts' key with a list of prompts.")
+                return data.get("prompts", [])
             elif file_path.endswith('.json'):
-                return json.load(file).get("prompts", [])
+                data = json.load(file)
+                if not isinstance(data, dict) or "prompts" not in data:
+                    raise ValueError("JSON file must contain a top-level 'prompts' key with a list of prompts.")
+                return data.get("prompts", [])
             else:
                 raise ValueError("Unsupported file format. Use YAML or JSON.")
 
@@ -486,18 +540,46 @@ class LLMInference:
         Returns:
             Dictionary of prompt IDs to results
         """
-        prompts = self.load_prompts(file_path)
-        if not prompts:
+        all_prompts_list = self.load_prompts(file_path)
+        if not all_prompts_list:
             raise ValueError("No prompts found in the input file.")
 
-        # Store original prompt order to maintain sequence in output
-        prompt_ids_ordered = [p.get("id") for p in prompts]
+        # Create a dictionary for quick lookup
+        all_prompts_dict = {p.get("id"): p for p in all_prompts_list if p.get("id")}
+
+        # Determine which prompts to run
+        prompts_to_run_list = all_prompts_list
+        target_run_id = cli_args.run_id if cli_args and hasattr(cli_args, 'run_id') else None
+
+        if target_run_id:
+            if target_run_id not in all_prompts_dict:
+                raise ValueError(f"Prompt ID '{target_run_id}' specified with --run-id not found in '{file_path}'.")
+
+            # Find all dependencies for the target ID
+            required_ids = self._find_all_dependencies(target_run_id, all_prompts_dict)
+            logging.info(f"Running target ID '{target_run_id}' and its dependencies: {required_ids}")
+
+            # Filter the list of prompts to include only the required ones
+            prompts_to_run_list = [p for p in all_prompts_list if p.get("id") in required_ids]
+
+            # Check if all required prompts were found (sanity check)
+            found_ids = {p.get("id") for p in prompts_to_run_list}
+            if found_ids != required_ids:
+                 missing = required_ids - found_ids
+                 logging.warning(f"Could not find configurations for required prompt IDs: {missing}")
+                 # Continue with the found prompts, process_prompts will handle errors for missing ones
+        else:
+             logging.info(f"Running all prompts from '{file_path}'")
+
+
+        # Store original prompt order (from the filtered list) to maintain sequence in output
+        prompt_ids_ordered = [p.get("id") for p in prompts_to_run_list]
 
         # Check if the file has global print settings
         print_config = self._extract_print_config(file_path)
 
-        # Get unique providers needed for this run
-        providers_needed = set([p.get("provider", self.provider_name).lower() for p in prompts])
+        # Get unique providers needed for this specific run
+        providers_needed = set([p.get("provider", self.provider_name).lower() for p in prompts_to_run_list])
         logging.info(f"Providers needed for this run: {', '.join(providers_needed)}")
 
         # Only initialize default provider if actually used
@@ -510,22 +592,34 @@ class LLMInference:
         cli_output_file = cli_args and hasattr(cli_args, 'output') and cli_args.output
         cli_batch_mode = cli_args and hasattr(cli_args, 'batch') and cli_args.batch
         cli_show_prompts = cli_args and hasattr(cli_args, 'show_prompts') and cli_args.show_prompts
+        cli_debug_mode = cli_args and hasattr(cli_args, 'debug') and cli_args.debug
+        cli_verbose_mode = cli_args and hasattr(cli_args, 'verbose') and cli_args.verbose
 
-        # Create prompt mapping for display
-        prompts_dict = {p.get("id"): p for p in prompts}
+        # Create prompt mapping for display (only for the prompts being run)
+        prompts_dict_for_run = {p.get("id"): p for p in prompts_to_run_list}
 
         # Define output callback function for immediate display (default behavior)
         output_callback = None
         if not cli_batch_mode and not cli_silent_mode:
             def immediate_output(prompt_id, result):
-                if not result:
+                # Only print if the prompt ID was actually part of the run
+                if prompt_id not in prompts_dict_for_run:
+                    return
+
+                if not result: # Don't print empty results unless in debug mode maybe?
+                    logging.debug(f"Skipping print for empty result of {prompt_id}")
+                    # Print errors even if empty
+                    if "Error:" in str(result):
+                         print(f"\n== RESULT: {prompt_id} ==\n")
+                         print(result)
+                         print("\n" + "="*50 + "\n")
                     return
 
                 print(f"\n== RESULT: {prompt_id} ==\n")
 
                 # Print prompt if requested
-                if cli_show_prompts and prompt_id in prompts_dict:
-                    prompt_config = prompts_dict[prompt_id]
+                if cli_show_prompts and prompt_id in prompts_dict_for_run:
+                    prompt_config = prompts_dict_for_run[prompt_id]
                     prompt_text = prompt_config.get("prompt", "")
 
                     # If this is a dependent prompt (with variables), show the resolved version
@@ -540,9 +634,9 @@ class LLMInference:
                     print("\nResponse:")
 
                 # Print debug info if enabled
-                if cli_args.debug and prompt_id in prompts_dict:
-                    prompt_config = prompts_dict[prompt_id]
-                    if cli_args.verbose:
+                if cli_debug_mode and prompt_id in prompts_dict_for_run:
+                    prompt_config = prompts_dict_for_run[prompt_id]
+                    if cli_verbose_mode:
                         print("Configuration:")
                         for key, value in prompt_config.items():
                             if key != "prompt" and key != "id":
@@ -567,129 +661,106 @@ class LLMInference:
             if not cli_silent_mode:
                 print("\n=== LLM INFERENCE RESULTS ===\n")
 
-        # Process the prompts
-        results = self.process_prompts(prompts, output_callback)
+        # Process the selected prompts
+        results = self.process_prompts(prompts_to_run_list, output_callback)
 
         # If in batch mode and not in silent mode, print results
         if cli_batch_mode and not cli_silent_mode:
-            # If print_config exists in YAML and we don't have CLI print args, use the YAML print config
-            if print_config and not cli_print_mode:
+            # Determine which IDs to print based on CLI or YAML config
+            ids_to_print_final = []
+            if cli_print_mode:
+                # CLI overrides YAML print config
+                ids_to_print_final = cli_args.print
+                print("\n=== LLM INFERENCE RESULTS (CLI specified) ===\n")
+            elif print_config:
+                 # Use YAML print config if no CLI print args
                 print("\n=== LLM INFERENCE RESULTS (from YAML/JSON) ===\n")
-
                 if print_config.get("print_all", False):
-                    # Print all results in the original order
-                    for prompt_id in prompt_ids_ordered:
-                        if prompt_id in results:
-                            print(f"\n== RESULT: {prompt_id} ==\n")
-                            # Show the prompt if show_prompts is enabled
-                            if cli_args and cli_args.show_prompts:
-                                for p in prompts:
-                                    if p.get("id") == prompt_id:
-                                        prompt_text = p.get("prompt", "")
-                                        if "{{" in prompt_text and prompt_id in self.resolved_prompts:
-                                            print("Original Prompt:")
-                                            print(prompt_text)
-                                            print("\nResolved Prompt:")
-                                            print(self.resolved_prompts[prompt_id])
-                                        else:
-                                            print("Prompt:")
-                                            print(prompt_text)
-                                        print("\nResponse:")
-                                        break
-                            print(results[prompt_id])
-                            print("\n" + "="*50 + "\n")
+                    # Print all results *that were actually run*
+                    ids_to_print_final = list(results.keys())
                 elif print_config.get("print_ids"):
-                    # Print only the specified prompt IDs
-                    for prompt_id in print_config["print_ids"]:
-                        if prompt_id in results:
-                            print(f"\n== RESULT: {prompt_id} ==\n")
-                            # Show the prompt if show_prompts is enabled
-                            if cli_args and cli_args.show_prompts:
-                                for p in prompts:
-                                    if p.get("id") == prompt_id:
-                                        prompt_text = p.get("prompt", "")
-                                        if "{{" in prompt_text and prompt_id in self.resolved_prompts:
-                                            print("Original Prompt:")
-                                            print(prompt_text)
-                                            print("\nResolved Prompt:")
-                                            print(self.resolved_prompts[prompt_id])
-                                        else:
-                                            print("Prompt:")
-                                            print(prompt_text)
-                                        print("\nResponse:")
-                                        break
-                            print(results[prompt_id])
-                            print("\n" + "="*50 + "\n")
-                        else:
-                            print(f"Warning: No result found for prompt ID '{prompt_id}'")
+                    # Print only the specified prompt IDs *if they were run*
+                    ids_to_print_final = [pid for pid in print_config["print_ids"] if pid in results]
             else:
-                # Determine which IDs to print
-                if cli_print_mode:
-                    ids_to_print = cli_args.print
-                else:
-                    ids_to_print = list(results.keys())
-
+                # Default: print all results *that were run*
+                ids_to_print_final = list(results.keys())
                 print("\n=== LLM INFERENCE RESULTS ===\n")
 
-                # Sort the IDs to match the original order in the YAML/JSON
-                if prompt_ids_ordered:
-                    # Filter ids_to_print to include only those in prompt_ids_ordered
-                    # and maintain the order from the original file
-                    sorted_ids = [pid for pid in prompt_ids_ordered if pid in ids_to_print]
-                    # Add any remaining IDs that might not be in prompt_ids_ordered
-                    sorted_ids.extend([pid for pid in ids_to_print if pid not in prompt_ids_ordered])
-                    ids_to_print = sorted_ids
+            # Filter ids_to_print_final further if --run-id was used
+            if target_run_id:
+                # If --run-id was used, only print that specific ID's result
+                # unless other IDs were explicitly requested via --print
+                if not cli_print_mode: # If user didn't specify --print, just show the target
+                    ids_to_print_final = [target_run_id] if target_run_id in results else []
+                else: # If user specified --print, respect that, but only show run IDs
+                    ids_to_print_final = [pid for pid in cli_args.print if pid in results]
 
-                # Display results in the correct order
-                for prompt_id in ids_to_print:
-                    if prompt_id in results:
-                        print(f"\n== RESULT: {prompt_id} ==\n")
+            # Sort the IDs to match the original order in the *filtered* prompt list
+            if prompt_ids_ordered:
+                sorted_ids = [pid for pid in prompt_ids_ordered if pid in ids_to_print_final]
+                # Add any remaining requested IDs that might not be in the original order (e.g., if --print specifies different order)
+                sorted_ids.extend([pid for pid in ids_to_print_final if pid not in sorted_ids])
+                ids_to_print = sorted_ids
+            else:
+                 ids_to_print = ids_to_print_final # Fallback if ordering fails
 
-                        # Print prompt if requested
-                        if cli_show_prompts and prompt_id in prompts_dict:
-                            prompt_config = prompts_dict[prompt_id]
-                            prompt_text = prompt_config.get("prompt", "")
 
-                            # If this is a dependent prompt (with variables), show the resolved version
-                            if "{{" in prompt_text and prompt_id in self.resolved_prompts:
-                                print("Original Prompt:")
-                                print(prompt_text)
-                                print("\nResolved Prompt:")
-                                print(self.resolved_prompts[prompt_id])
-                            else:
-                                print("Prompt:")
-                                print(prompt_text)
-                            print("\nResponse:")
+            # Display results in the determined order
+            for prompt_id in ids_to_print:
+                if prompt_id in results:
+                    print(f"\n== RESULT: {prompt_id} ==\n")
 
-                        # Print debug info if enabled
-                        if cli_args.debug and prompt_id in prompts_dict:
-                            prompt_config = prompts_dict[prompt_id]
-                            if cli_args.verbose:
-                                print("Configuration:")
-                                for key, value in prompt_config.items():
-                                    if key != "prompt" and key != "id":
-                                        print(f"  {key}: {value}")
-                                if not cli_show_prompts:  # Don't duplicate prompt if already shown
-                                    print("\nPrompt:")
-                                    print(prompt_config.get("prompt", ""))
-                                print("\nResult:")
-                            else:
-                                print("Configuration:", end=" ")
-                                config_str = ", ".join(f"{k}={v}" for k, v in prompt_config.items()
-                                                    if k != "prompt" and k != "id")
-                                print(config_str)
-                                print("\nResult:")
+                    # Print prompt if requested
+                    if cli_show_prompts and prompt_id in prompts_dict_for_run:
+                        prompt_config = prompts_dict_for_run[prompt_id]
+                        prompt_text = prompt_config.get("prompt", "")
 
-                        print(results[prompt_id])
-                        print("\n" + "="*50 + "\n")
-                    else:
-                        print(f"Warning: No result found for prompt ID '{prompt_id}'")
+                        # If this is a dependent prompt (with variables), show the resolved version
+                        if "{{" in prompt_text and prompt_id in self.resolved_prompts:
+                            print("Original Prompt:")
+                            print(prompt_text)
+                            print("\nResolved Prompt:")
+                            print(self.resolved_prompts[prompt_id])
+                        else:
+                            print("Prompt:")
+                            print(prompt_text)
+                        print("\nResponse:")
+
+                    # Print debug info if enabled
+                    if cli_debug_mode and prompt_id in prompts_dict_for_run:
+                        prompt_config = prompts_dict_for_run[prompt_id]
+                        if cli_verbose_mode:
+                            print("Configuration:")
+                            for key, value in prompt_config.items():
+                                if key != "prompt" and key != "id":
+                                    print(f"  {key}: {value}")
+                            if not cli_show_prompts:  # Don't duplicate prompt if already shown
+                                print("\nPrompt:")
+                                print(prompt_config.get("prompt", ""))
+                            print("\nResult:")
+                        else:
+                            print("Configuration:", end=" ")
+                            config_str = ", ".join(f"{k}={v}" for k, v in prompt_config.items()
+                                                if k != "prompt" and k != "id")
+                            print(config_str)
+                            print("\nResult:")
+
+                    print(results[prompt_id])
+                    print("\n" + "="*50 + "\n")
+                else:
+                    print(f"Warning: No result found for prompt ID '{prompt_id}' (it might not have been run or failed).")
 
         # Save results to file if requested
         if output_file:
+            # Save only the results that were actually generated in this run
             with open(output_file, 'w', encoding='utf-8') as f:
                 json.dump(results, f, indent=4)
-            logging.info(f"Results saved to {output_file}")
+            logging.info(f"Results for prompts {list(results.keys())} saved to {output_file}")
+        elif cli_output_file and not output_file: # Check if output was requested via CLI but not passed directly (shouldn't happen with current main.py but good practice)
+             with open(cli_output_file, 'w', encoding='utf-8') as f:
+                json.dump(results, f, indent=4)
+             logging.info(f"Results for prompts {list(results.keys())} saved to {cli_output_file}")
+
 
         return results
 
@@ -703,15 +774,19 @@ class LLMInference:
         Returns:
             Dictionary with printing configuration or None
         """
-        with open(file_path, 'r', encoding='utf-8') as file:
-            if file_path.endswith(('.yaml', '.yml')):
-                data = yaml.safe_load(file)
-            elif file_path.endswith('.json'):
-                data = json.load(file)
-            else:
-                return None
+        try:
+            with open(file_path, 'r', encoding='utf-8') as file:
+                if file_path.endswith(('.yaml', '.yml')):
+                    data = yaml.safe_load(file)
+                elif file_path.endswith('.json'):
+                    data = json.load(file)
+                else:
+                    return None
 
-        # Check if the file has a global print configuration
-        if "print" in data:
-            return data["print"]
+            # Check if the file has a global print configuration
+            if isinstance(data, dict) and "print" in data:
+                return data["print"]
+        except Exception as e:
+            logging.warning(f"Could not read or parse print config from '{file_path}': {e}")
+            return None
         return None

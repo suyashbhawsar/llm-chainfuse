@@ -86,6 +86,21 @@ python main.py example-prompts.yaml --batch
 python main.py example-prompts.json --output results.json
 ```
 
+### **Run Specific Prompt ID**
+
+Execute only a specific prompt ID and its required dependencies.
+
+```bash
+# Run only the 'critique' prompt and any prompts it depends on
+python main.py example-prompts.yaml --run-id critique
+
+# When used with --batch, only the final target ID's result is printed by default
+python main.py example-prompts.yaml --run-id critique --batch
+
+# To print other dependencies as well in batch mode, use --print
+python main.py example-prompts.yaml --run-id critique --batch --print summary critique
+```
+
 ### **Run with Specific Provider**
 ```bash
 python main.py example-prompts.yaml --provider anthropic
