@@ -38,14 +38,21 @@ This project provides a **flexible and developer-friendly** framework to interac
 
 ---
 
-## 📂 Installation
+## 🛠️ Setup Environment
 
 ### **1️⃣ Install Dependencies**
 ```bash
 uv sync
 ```
 
-### **2️⃣ Set API Keys**
+### **2️⃣ Activate Virtual Environment**
+```bash
+source .venv/bin/activate  # For Linux/macOS
+# .\.venv\Scripts\activate    # For Windows PowerShell
+# .venv\Scripts\activate.bat  # For Windows Command Prompt
+```
+
+### **3️⃣ Set API Keys**
 ```bash
 # For OpenAI
 export OPENAI_API_KEY="your-openai-api-key"
