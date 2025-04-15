@@ -1,2 +1,5 @@
 __pycache__/
 .venv/
+profiles/
+prompts.yaml
+job_post.txt

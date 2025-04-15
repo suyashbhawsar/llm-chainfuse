@@ -68,7 +68,7 @@ def main():
 
     # Context files
     parser.add_argument("-c", "--context", nargs="*",
-                      help="List of context files (ID:path). Example: id1:context1.txt id2:context2.txt")
+                      help="List of context files (ID:path) or direct string values (ID:value). Example: id1:context1.txt id2:context2.txt id3:direct_value")
 
     # Utility functions
     utility_group = parser.add_argument_group("Utility Functions")
@@ -178,16 +178,30 @@ def main():
         return
 
     # Load context files if provided
+    context_files_to_load = {}
+    direct_contexts = {}
     if args.context:
-        context_files = {}
         for context_pair in args.context:
             try:
-                context_id, file_path = context_pair.split(":", 1)
-                context_files[context_id] = file_path
+                context_id, value_str = context_pair.split(":", 1)
+                # Check if the value looks like a file path and exists
+                if os.path.isfile(value_str):
+                    context_files_to_load[context_id] = value_str
+                else:
+                    # Treat as a direct string value (remove quotes if present)
+                    direct_contexts[context_id] = value_str.strip('"')
             except ValueError:
-                print(f"Invalid context argument format: '{context_pair}'. Expected format: ID:path.")
+                print(f"Invalid context argument format: '{context_pair}'. Expected format: ID:path or ID:\"value\".")
                 return
-        llm.add_contexts(context_files)
+
+    # Load contexts from files first
+    if context_files_to_load:
+        llm.add_contexts(context_files_to_load)
+
+    # Add direct contexts, potentially overwriting file contexts if IDs clash
+    if direct_contexts:
+        llm.contexts.update(direct_contexts)
+        logging.info(f"Added direct contexts: {list(direct_contexts.keys())}")
 
     # Handle list models functionality
     if args.list_models:

@@ -40,9 +40,9 @@ This project provides a **flexible and developer-friendly** framework to interac
 
 ## 📂 Installation
 
-### **1️⃣ Install Core Dependencies**
+### **1️⃣ Install Dependencies**
 ```bash
-pip install -r requirements.txt
+uv sync
 ```
 
 ### **2️⃣ Set API Keys**
@@ -67,97 +67,97 @@ export GOOGLE_API_KEY="your-gemini-api-key"
 ### **Run Inference** (Basic Example)
 ```bash
 # Using YAML configuration (results shown immediately as they arrive)
-python cli.py example-prompts.yaml
+python main.py example-prompts.yaml
 
 # Save output to file while showing results
-python cli.py example-prompts.yaml --output results.json
+python main.py example-prompts.yaml --output results.json
 
 # Wait for all results before displaying (batch mode)
-python cli.py example-prompts.yaml --batch
+python main.py example-prompts.yaml --batch
 
 # Using JSON configuration
-python cli.py example-prompts.json --output results.json
+python main.py example-prompts.json --output results.json
 ```
 
 ### **Run with Specific Provider**
 ```bash
-python cli.py example-prompts.yaml --provider anthropic
-python cli.py example-prompts.yaml --provider gemini
+python main.py example-prompts.yaml --provider anthropic
+python main.py example-prompts.yaml --provider gemini
 ```
 
 ### **Override Defaults from CLI**
 ```bash
-python cli.py example-prompts.yaml --temperature 0.9 --max_tokens 500 --model gpt-4o --output results.json
+python main.py example-prompts.yaml --temperature 0.9 --max_tokens 500 --model gpt-4o --output results.json
 ```
 
 ### **Streaming Support**
 ```bash
 # Stream direct prompt response (streaming only works with direct prompts)
-python cli.py -p openai -m gpt-4o --stream "Tell me a story"
+python main.py -p openai -m gpt-4o --stream "Tell me a story"
 
 # Stream with specific provider
-python cli.py -p anthropic -m claude-3-sonnet-20240229 --stream "Explain quantum computing"
-python cli.py -p gemini -m gemini-1.5-flash --stream "What is machine learning?"
+python main.py -p anthropic -m claude-3-sonnet-20240229 --stream "Explain quantum computing"
+python main.py -p gemini -m gemini-1.5-flash --stream "What is machine learning?"
 
 # Stream with Ollama
-python cli.py -p ollama -m llama3.2:latest --stream "What is machine learning?"
+python main.py -p ollama -m llama3.2:latest --stream "What is machine learning?"
 ```
 
 ### **List Available Models**
 ```bash
-python cli.py --provider openai --list-models
-python cli.py --provider anthropic --list-models
-python cli.py --provider gemini --list-models
-python cli.py --provider ollama --list-models
+python main.py --provider openai --list-models
+python main.py --provider anthropic --list-models
+python main.py --provider gemini --list-models
+python main.py --provider ollama --list-models
 ```
 
 ### **List Available Providers**
 ```bash
-python cli.py --list-providers
+python main.py --list-providers
 ```
 
 ### **Validate Model & Parameters Before Execution**
 ```bash
-python cli.py example-prompts.yaml --validate-models
+python main.py example-prompts.yaml --validate-models
 ```
 
 ### **Print Results to Console**
 ```bash
 # Results are shown immediately as they arrive (default behavior)
-python cli.py example-prompts.yaml
+python main.py example-prompts.yaml
 
 # Wait for all results before displaying
-python cli.py example-prompts.yaml --batch
+python main.py example-prompts.yaml --batch
 
 # Print specific prompt results
-python cli.py example-prompts.yaml --print summary critique
+python main.py example-prompts.yaml --print summary critique
 
 # Hide terminal output (only save to file)
-python cli.py example-prompts.yaml --output results.json --silent
+python main.py example-prompts.yaml --output results.json --silent
 ```
 
 ### **Debug Mode Options**
 ```bash
 # Enable debug mode (shows prompts and timing information)
-python cli.py example-prompts.yaml --debug
+python main.py example-prompts.yaml --debug
 
 # Increase verbosity level (0-2)
-python cli.py example-prompts.yaml --debug --verbose 2
+python main.py example-prompts.yaml --debug --verbose 2
 
 # Show prompts in output (enabled by default in debug mode)
-python cli.py example-prompts.yaml --show-prompts
+python main.py example-prompts.yaml --show-prompts
 
 # Show configuration in output
-python cli.py example-prompts.yaml --show-config
+python main.py example-prompts.yaml --show-config
 
 # Show request options in output
-python cli.py example-prompts.yaml --show-request-options
+python main.py example-prompts.yaml --show-request-options
 
 # Show response headers in output
-python cli.py example-prompts.yaml --show-response-headers
+python main.py example-prompts.yaml --show-response-headers
 
 # Show request ID in output
-python cli.py example-prompts.yaml --show-request-id
+python main.py example-prompts.yaml --show-request-id
 ```
 
 ### **Parallel Execution Example**
@@ -205,13 +205,13 @@ personal_summary: 2.61 seconds
 
 ### **Include Context Files**
 ```bash
-python cli.py example-prompts.yaml --context background:context1.txt examples:context2.txt
+python main.py example-prompts.yaml --context background:context1.txt examples:context2.txt
 ```
 
 You can also include YAML files as context, which supports nested path resolution using dot notation:
 
 ```bash
-python cli.py example-prompts.yaml --context catalog:data/product_catalog.yaml
+python main.py example-prompts.yaml --context catalog:data/product_catalog.yaml
 ```
 
 Example YAML context file (`data/product_catalog.yaml`):
@@ -498,10 +498,10 @@ The framework supports both YAML and JSON formats for prompt configuration:
 
 ```bash
 # Run with YAML configuration
-python cli.py examples/input.yaml
+python main.py examples/input.yaml
 
 # Run with JSON configuration
-python cli.py examples/input.json
+python main.py examples/input.json
 ```
 
 ### **2️⃣ Provider-Specific Parameters**
