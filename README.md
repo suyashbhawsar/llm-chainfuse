@@ -82,7 +82,7 @@ python main.py example-prompts.yaml --output results.json
 # Wait for all results before displaying (batch mode)
 python main.py example-prompts.yaml --batch
 
-# Using JSON configuration
+# Using JSON configuration (if you have a JSON prompt file)
 python main.py example-prompts.json --output results.json
 ```
 
@@ -432,7 +432,7 @@ response = llm_ollama.call_api("Write a Python function", model="llama3.2")
 # Using YAML
 llm.run("example-prompts.yaml", output_file="results.json")
 
-# Using JSON
+# Using JSON configuration (if you have a JSON prompt file)
 llm.run("example-prompts.json", output_file="results.json")
 
 # With debug args (pass CLI args to control output format)

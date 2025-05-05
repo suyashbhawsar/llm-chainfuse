@@ -15,7 +15,7 @@ def main():
     # Provider configuration
     provider_group = parser.add_argument_group("Provider Configuration")
     provider_group.add_argument("-p", "--provider", type=str, default="openai",
-                             help="LLM provider (openai, anthropic, ollama)")
+                             help="LLM provider (openai, anthropic, ollama, gemini)")
     provider_group.add_argument("-k", "--api-key", type=str,
                              help="API key for the selected provider (defaults to environment variable)")
     provider_group.add_argument("--provider-options", type=str,
@@ -111,7 +111,7 @@ def main():
             from model_providers import get_provider
             # Get a list of provider names by attempting to initialize each
             provider_names = []
-            for provider_name in ["openai", "anthropic", "ollama"]:
+            for provider_name in ["openai", "anthropic", "ollama", "gemini"]:
                 try:
                     get_provider(provider_name)
                     provider_names.append(provider_name)
