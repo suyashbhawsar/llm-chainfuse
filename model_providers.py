@@ -3,6 +3,7 @@ import abc
 import json
 import logging
 from typing import Dict, List, Optional, Any, Union, Iterator
+from env_loader import get_env
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -527,8 +528,7 @@ class GeminiProvider(ModelProvider):
             import google.generativeai as genai
             # Use GOOGLE_API_KEY environment variable if api_key is not provided
             if api_key is None:
-                import os
-                api_key = os.environ.get("GOOGLE_API_KEY")
+                api_key = get_env("GOOGLE_API_KEY")
 
             genai.configure(api_key=api_key)
             self.client = genai

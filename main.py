@@ -7,8 +7,17 @@ import io
 import sys
 from llm_inference import LLMInference
 from model_providers import get_provider
+from env_loader import load_env, get_env
 
 def main():
+    # Load environment variables from .env file (including executable commands)
+    try:
+        loaded_vars = load_env()
+        if loaded_vars:
+            logging.debug(f"Loaded environment variables: {list(loaded_vars.keys())}")
+    except Exception as e:
+        logging.warning(f"Failed to load .env file: {e}")
+
     # Create argument parser
     parser = argparse.ArgumentParser(description="Multi-provider LLM Inference Tool")
 
